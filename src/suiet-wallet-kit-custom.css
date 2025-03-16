@@ -1,0 +1,23 @@
+:root {
+    --wkit-bg-rgb: 41, 32, 96; /* Slightly lighter Deep Purple Background */
+    --wkit-on-bg-rgb: 255, 255, 255; /* White Text */
+    --wkit-border-radius: 12px;
+    --wkit-button-width: auto;
+
+    /* Default font size */
+    --wkit-font-size-medium: 16px;
+    --wkit-font-size-small: 14px;
+
+    /* Box Shadow for gradient effect */
+    --wkit-box-shadow: 
+        0 0 10px rgba(59, 130, 246, 0.6),  /* Blue-600 */
+        0 0 20px rgba(147, 51, 234, 0.7),  /* Purple-600 */
+        0 0 30px rgba(59, 130, 246, 0.6);  /* Blue-600 */
+}
+
+@media (max-width: 640px) {
+    :root {
+        --wkit-font-size-medium: 10px;
+        --wkit-font-size-small: 5px;
+    }
+}
