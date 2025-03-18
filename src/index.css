@@ -1,157 +1,259 @@
 @import "tailwindcss";
 
-                @keyframes gradient-x {
-                    0% {
-                        background-position: 0% 50%;
-                    }
-        
-                    50% {
-                        background-position: 100% 50%;
-                    }
-        
-                    100% {
-                        background-position: 0% 50%;
-                    }
-                }
-        
-                .animate-gradient-x {
-                    background-size: 200% 200%;
-                    animation: gradient-x 15s ease infinite;
-                }
-                                /* Force override ConnectButton background */
-                                button[data-testid="connect-button"] {
-                                    background-color: #131644 !important;
-                                    border: none !important;
-                                    color: white !important;
-                                }
-                                                                .custom-scrollbar {
-                                                                    scrollbar-width: thin;
-                                                                    scrollbar-color: rgba(99, 102, 241, 0.5) rgba(17, 24, 39, 0.3);
-                                                                }
-                                
-                                                                .custom-scrollbar::-webkit-scrollbar {
-                                                                    width: 8px;
-                                                                    height: 8px;
-                                                                }
-                                
-                                                                .custom-scrollbar::-webkit-scrollbar-track {
-                                                                    background: rgba(17, 24, 39, 0.3);
-                                                                    border-radius: 10px;
-                                                                }
-                                
-                                                                .custom-scrollbar::-webkit-scrollbar-thumb {
-                                                                    background-color: rgba(99, 102, 241, 0.5);
-                                                                    border-radius: 10px;
-                                                                    border: 2px solid rgba(17, 24, 39, 0.3);
-                                                                }
-                                
-                                                                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-                                                                    background-color: rgba(99, 102, 241, 0.7);
-                                                                }
+/* ===== ANIMATIONS ===== */
+@keyframes gradient-x {
+    0% {
+        background-position: 0% 50%;
+    }
+    50% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0% 50%;
+    }
+}
 
-                                                                                                                                /* Add these styles to your global.css or styles.css file */
-                                                                
-                                                                                                                                /* Toast container styling */
-                                                                                                                                .toast-container {
-                                                                                                                                    z-index: 9999;
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Toast animations */
-                                                                                                                                .toast-slide-in {
-                                                                                                                                    animation: toast-slide-in-right 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
-                                                                                                                                }
-                                                                
-                                                                                                                                .toast-slide-out {
-                                                                                                                                    animation: toast-slide-out-right 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
-                                                                                                                                }
-                                                                
-                                                                                                                                @keyframes toast-slide-in-right {
-                                                                                                                                    0% {
-                                                                                                                                        transform: translateX(1000px);
-                                                                                                                                        opacity: 0;
-                                                                                                                                    }
-                                                                
-                                                                                                                                    100% {
-                                                                                                                                        transform: translateX(0);
-                                                                                                                                        opacity: 1;
-                                                                                                                                    }
-                                                                                                                                }
-                                                                
-                                                                                                                                @keyframes toast-slide-out-right {
-                                                                                                                                    0% {
-                                                                                                                                        transform: translateX(0);
-                                                                                                                                        opacity: 1;
-                                                                                                                                    }
-                                                                
-                                                                                                                                    100% {
-                                                                                                                                        transform: translateX(1000px);
-                                                                                                                                        opacity: 0;
-                                                                                                                                    }
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Basic toast styling */
-                                                                                                                                .Toastify__toast {
-                                                                                                                                    backdrop-filter: blur(12px);
-                                                                                                                                    border-radius: 0.75rem !important;
-                                                                                                                                    padding: 1rem !important;
-                                                                                                                                    min-height: 0 !important;
-                                                                                                                                    min-width: 300px !important;
-                                                                                                                                    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                .Toastify__toast-body {
-                                                                                                                                    padding: 0 !important;
-                                                                                                                                    font-size: 0.875rem !important;
-                                                                                                                                    font-weight: 500 !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Toast progress bar */
-                                                                                                                                .Toastify__progress-bar {
-                                                                                                                                    height: 3px !important;
-                                                                                                                                    background: linear-gradient(to right, rgb(99, 102, 241), rgb(6, 182, 212)) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Toast type variations */
-                                                                                                                                .Toastify__toast--success {
-                                                                                                                                    background-color: rgba(17, 24, 39, 0.95) !important;
-                                                                                                                                    border: 1px solid rgba(16, 185, 129, 0.3) !important;
-                                                                                                                                    box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.1) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                .Toastify__toast--error {
-                                                                                                                                    background-color: rgba(17, 24, 39, 0.95) !important;
-                                                                                                                                    border: 1px solid rgba(244, 63, 94, 0.3) !important;
-                                                                                                                                    box-shadow: 0 10px 15px -3px rgba(244, 63, 94, 0.1) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                .Toastify__toast--info {
-                                                                                                                                    background-color: rgba(17, 24, 39, 0.95) !important;
-                                                                                                                                    border: 1px solid rgba(6, 182, 212, 0.3) !important;
-                                                                                                                                    box-shadow: 0 10px 15px -3px rgba(6, 182, 212, 0.1) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                .Toastify__toast--warning {
-                                                                                                                                    background-color: rgba(17, 24, 39, 0.95) !important;
-                                                                                                                                    border: 1px solid rgba(245, 158, 11, 0.3) !important;
-                                                                                                                                    box-shadow: 0 10px 15px -3px rgba(245, 158, 11, 0.1) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Loading toast style */
-                                                                                                                                .Toastify__toast--loading {
-                                                                                                                                    background-color: rgba(17, 24, 39, 0.95) !important;
-                                                                                                                                    border: 1px solid rgba(99, 102, 241, 0.3) !important;
-                                                                                                                                    box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.1) !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                /* Close button styling */
-                                                                                                                                .Toastify__close-button {
-                                                                                                                                    color: #9ca3af !important;
-                                                                                                                                    opacity: 1 !important;
-                                                                                                                                }
-                                                                
-                                                                                                                                .Toastify__close-button:hover {
-                                                                                                                                    color: #f9fafb !important;
-                                                                                                                                }
+.animate-gradient-x {
+    background-size: 200% 200%;
+    animation: gradient-x 15s ease infinite;
+}
 
-                                                                                                                              
-                                                            
+@keyframes pulse-slow {
+    0%, 100% {
+        opacity: 0.5;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+.animate-pulse-slow {
+    animation: pulse-slow 4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* ===== GLOBAL CUSTOM SCROLLBAR ===== */
+/* Apply custom scrollbar to the entire document */
+html {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.5) rgba(17, 24, 39, 0.3);
+}
+
+html::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+html::-webkit-scrollbar-track {
+    background: rgba(17, 24, 39, 0.3);
+    border-radius: 10px;
+}
+
+html::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.5);
+    border-radius: 10px;
+    border: 2px solid rgba(17, 24, 39, 0.3);
+}
+
+html::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(99, 102, 241, 0.7);
+}
+
+/* The same for specific elements with .custom-scrollbar class */
+.custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.5) rgba(17, 24, 39, 0.3);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(17, 24, 39, 0.3);
+    border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.5);
+    border-radius: 10px;
+    border: 2px solid rgba(17, 24, 39, 0.3);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(99, 102, 241, 0.7);
+}
+
+/* Also apply to all elements with overflow that might need scrollbars */
+div[style*="overflow: auto"], 
+div[style*="overflow:auto"], 
+div[style*="overflow-y: auto"], 
+div[style*="overflow-y:auto"],
+.overflow-auto, 
+.overflow-y-auto,
+.overflow-x-auto {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.5) rgba(17, 24, 39, 0.3);
+}
+
+div[style*="overflow: auto"]::-webkit-scrollbar, 
+div[style*="overflow:auto"]::-webkit-scrollbar, 
+div[style*="overflow-y: auto"]::-webkit-scrollbar, 
+div[style*="overflow-y:auto"]::-webkit-scrollbar,
+.overflow-auto::-webkit-scrollbar, 
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-x-auto::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+div[style*="overflow: auto"]::-webkit-scrollbar-track, 
+div[style*="overflow:auto"]::-webkit-scrollbar-track, 
+div[style*="overflow-y: auto"]::-webkit-scrollbar-track, 
+div[style*="overflow-y:auto"]::-webkit-scrollbar-track,
+.overflow-auto::-webkit-scrollbar-track, 
+.overflow-y-auto::-webkit-scrollbar-track,
+.overflow-x-auto::-webkit-scrollbar-track {
+    background: rgba(17, 24, 39, 0.3);
+    border-radius: 10px;
+}
+
+div[style*="overflow: auto"]::-webkit-scrollbar-thumb, 
+div[style*="overflow:auto"]::-webkit-scrollbar-thumb, 
+div[style*="overflow-y: auto"]::-webkit-scrollbar-thumb, 
+div[style*="overflow-y:auto"]::-webkit-scrollbar-thumb,
+.overflow-auto::-webkit-scrollbar-thumb, 
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.overflow-x-auto::-webkit-scrollbar-thumb {
+    background-color: rgba(99, 102, 241, 0.5);
+    border-radius: 10px;
+    border: 2px solid rgba(17, 24, 39, 0.3);
+}
+
+div[style*="overflow: auto"]::-webkit-scrollbar-thumb:hover, 
+div[style*="overflow:auto"]::-webkit-scrollbar-thumb:hover, 
+div[style*="overflow-y: auto"]::-webkit-scrollbar-thumb:hover, 
+div[style*="overflow-y:auto"]::-webkit-scrollbar-thumb:hover,
+.overflow-auto::-webkit-scrollbar-thumb:hover, 
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(99, 102, 241, 0.7);
+}
+
+/* SimpleBar custom styling to match our theme */
+.simplebar-scrollbar::before {
+    background-color: rgba(99, 102, 241, 0.7) !important;
+}
+
+.simplebar-track.simplebar-vertical {
+    background-color: rgba(17, 24, 39, 0.3) !important;
+    border-radius: 10px !important;
+}
+
+/* Force override ConnectButton background */
+button[data-testid="connect-button"] {
+    background-color: #131644 !important;
+    border: none !important;
+    color: white !important;
+}
+
+/* ===== TOAST NOTIFICATIONS ===== */
+/* Toast container styling */
+.toast-container {
+    z-index: 9999;
+}
+
+/* Toast animations */
+.toast-slide-in {
+    animation: toast-slide-in-right 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+.toast-slide-out {
+    animation: toast-slide-out-right 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+}
+
+@keyframes toast-slide-in-right {
+    0% {
+        transform: translateX(1000px);
+        opacity: 0;
+    }
+    100% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@keyframes toast-slide-out-right {
+    0% {
+        transform: translateX(0);
+        opacity: 1;
+    }
+    100% {
+        transform: translateX(1000px);
+        opacity: 0;
+    }
+}
+
+/* Basic toast styling */
+.Toastify__toast {
+    backdrop-filter: blur(12px);
+    border-radius: 0.75rem !important;
+    padding: 1rem !important;
+    min-height: 0 !important;
+    min-width: 300px !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2) !important;
+}
+
+.Toastify__toast-body {
+    padding: 0 !important;
+    font-size: 0.875rem !important;
+    font-weight: 500 !important;
+}
+
+/* Toast progress bar */
+.Toastify__progress-bar {
+    height: 3px !important;
+    background: linear-gradient(to right, rgb(99, 102, 241), rgb(6, 182, 212)) !important;
+}
+
+/* Toast type variations */
+.Toastify__toast--success {
+    background-color: rgba(17, 24, 39, 0.95) !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+    box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.1) !important;
+}
+
+.Toastify__toast--error {
+    background-color: rgba(17, 24, 39, 0.95) !important;
+    border: 1px solid rgba(244, 63, 94, 0.3) !important;
+    box-shadow: 0 10px 15px -3px rgba(244, 63, 94, 0.1) !important;
+}
+
+.Toastify__toast--info {
+    background-color: rgba(17, 24, 39, 0.95) !important;
+    border: 1px solid rgba(6, 182, 212, 0.3) !important;
+    box-shadow: 0 10px 15px -3px rgba(6, 182, 212, 0.1) !important;
+}
+
+.Toastify__toast--warning {
+    background-color: rgba(17, 24, 39, 0.95) !important;
+    border: 1px solid rgba(245, 158, 11, 0.3) !important;
+    box-shadow: 0 10px 15px -3px rgba(245, 158, 11, 0.1) !important;
+}
+
+/* Loading toast style */
+.Toastify__toast--loading {
+    background-color: rgba(17, 24, 39, 0.95) !important;
+    border: 1px solid rgba(99, 102, 241, 0.3) !important;
+    box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.1) !important;
+}
+
+/* Close button styling */
+.Toastify__close-button {
+    color: #9ca3af !important;
+    opacity: 1 !important;
+}
+
+.Toastify__close-button:hover {
+    color: #f9fafb !important;
+}

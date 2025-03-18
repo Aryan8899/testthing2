@@ -2,9 +2,8 @@
 
 "use client";
 import React from "react";
-import { useState, useCallback,useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useWallet } from "@suiet/wallet-kit";
-import { SuiClient } from "@mysten/sui.js/client";
 
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -20,12 +19,16 @@ import toast, { StyledToastContainer } from "../utils/CustomToast";
 // Import shared components
 import TokenSelector from "../components/common/TokenSelector";
 import InfoCard from "../components/common/InfoCard";
+import NetworkStatusBar from "../components/NetworkStatus"; // Import the network status component
 
 // Import shared hooks
 import { usePair } from "../hooks/usePair";
 import { useTokenAmounts } from "../hooks/useTokenAmounts";
 import { useTokenBalances } from "../hooks/useTokenBalance";
-import { suiClient } from "../utils/suiClient";
+
+// Import advanced client instead of regular suiClient
+import { advancedSuiClient } from "../utils/advancedSuiClient";
+
 // Import shared utilities
 import { Token } from "../utils/tokenUtils";
 import { formatLargeNumber } from "../utils/formatUtils";
@@ -41,16 +44,18 @@ const LiquidityPage = () => {
   const [token0, setToken0] = useState<Token | null>(null);
   const [token1, setToken1] = useState<Token | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [networkError, setNetworkError] = useState<string | null>(null);
+  const [hasRetried, setHasRetried] = useState(false);
 
   // New state to control when events are re-rendered
-const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
+  const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
+
+  // Ref to track component mount state
+  const isMounted = useRef(true);
 
   // Hooks
   const { account } = useWallet();
-
-  
-   const { signAndExecuteTransactionBlock } = useWallet();
-
+  const { signAndExecuteTransaction } = useWallet();
 
   // Get pair information
   const {
@@ -62,6 +67,7 @@ const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
     checkPairExistence,
     fetchPairEvents,
     processLPEvent,
+    refreshReserves,
   } = usePair(token0, token1);
 
   // Get token amounts and related calculations
@@ -77,19 +83,45 @@ const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
   } = useTokenAmounts(token0, token1, reserves, pairExists, "liquidity");
 
   // Get token balances
-  const { balance0, balance1, fetchBalances } = useTokenBalances(
-    token0,
-    token1
-  );
+  const {
+    balance0,
+    balance1,
+    fetchBalances,
+    error: balanceError,
+  } = useTokenBalances(token0, token1);
+
+  // Update mount status on unmount
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // Handle network errors from balance fetching
+  useEffect(() => {
+    if (balanceError) {
+      // Only show if the error is network-related
+      if (
+        balanceError.includes("INSUFFICIENT_RESOURCES") ||
+        balanceError.includes("Failed to fetch") ||
+        balanceError.includes("Network")
+      ) {
+        setNetworkError(balanceError);
+      }
+    } else {
+      setNetworkError(null);
+    }
+  }, [balanceError]);
 
   // Token change handlers
   const handleToken0Change = useCallback(
     (newToken: Token | null) => {
       if (!newToken || newToken.id === token0?.id) return;
-  
+
       setToken0(newToken);
       resetAmounts();
-  
+
       // Only proceed when both tokens are selected
       if (token1) {
         checkPairExistence();
@@ -97,18 +129,14 @@ const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
     },
     [token0, token1, resetAmounts, checkPairExistence]
   );
-  
-  
-  
-  
 
   const handleToken1Change = useCallback(
     (newToken: Token | null) => {
       if (!newToken || newToken.id === token1?.id) return;
-  
+
       setToken1(newToken);
       resetAmounts();
-  
+
       // Only proceed when both tokens are selected
       if (token0) {
         checkPairExistence();
@@ -116,11 +144,116 @@ const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
     },
     [token0, token1, resetAmounts, checkPairExistence]
   );
-  
-  
-  
 
-  // Create pair handler
+  /**
+   * Waits for transaction to be finalized on chain before proceeding
+   * This helps ensure that pool data queries return the latest state
+   */
+  const waitForTransactionFinality = async (
+    txDigest: string,
+    maxAttempts = 10
+  ): Promise<boolean> => {
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      try {
+        // Check transaction status
+        const txStatus = await advancedSuiClient.getTransactionBlock({
+          digest: txDigest,
+          options: {
+            showEffects: true,
+          },
+        });
+
+        if (txStatus.effects?.status?.status === "success") {
+          console.log(
+            `Transaction ${txDigest.slice(0, 8)}... confirmed after ${
+              attempts + 1
+            } attempts`
+          );
+          return true;
+        }
+
+        // If still processing, wait with exponential backoff
+        attempts++;
+        const delay = Math.min(1000 * Math.pow(1.5, attempts), 10000);
+        console.log(
+          `Waiting ${
+            delay / 1000
+          }s for transaction finality (attempt ${attempts}/${maxAttempts})...`
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      } catch (error) {
+        console.warn(
+          `Error checking transaction status (attempt ${
+            attempts + 1
+          }/${maxAttempts}):`,
+          error
+        );
+        attempts++;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+
+    console.warn(
+      `Transaction finality check timed out after ${maxAttempts} attempts`
+    );
+    return false;
+  };
+
+  /**
+   * Refreshes all data after a successful transaction
+   * with staggered timing to avoid overwhelming the network
+   */
+  const refreshAfterTransaction = useCallback(async () => {
+    if (!isMounted.current) return;
+
+    // First, reset any error states
+    setNetworkError(null);
+    setHasRetried(false);
+
+    // Step 1: Check pair existence (most important)
+    try {
+      await checkPairExistence();
+    } catch (err) {
+      console.error("Error checking pair existence during refresh:", err);
+    }
+
+    // Step 2: After a small delay, refresh reserves specifically
+    setTimeout(async () => {
+      if (!isMounted.current) return;
+      try {
+        await refreshReserves();
+      } catch (err) {
+        console.error("Error refreshing reserves during refresh:", err);
+      }
+
+      // Step 3: Then, after another delay, fetch LP events
+      setTimeout(async () => {
+        if (!isMounted.current || !currentPairId) return;
+        try {
+          await fetchPairEvents(currentPairId);
+        } catch (err) {
+          console.error("Error fetching events during refresh:", err);
+        }
+
+        // Step 4: Finally, refresh token balances
+        setTimeout(() => {
+          if (isMounted.current) {
+            fetchBalances();
+          }
+        }, 1000);
+      }, 1000);
+    }, 1000);
+  }, [
+    checkPairExistence,
+    refreshReserves,
+    fetchPairEvents,
+    currentPairId,
+    fetchBalances,
+  ]);
+
+  // Create pair handler with retry logic
   const handleCreatePair = async () => {
     if (!account?.address) {
       toast.error("Please connect your wallet");
@@ -139,69 +272,98 @@ const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
       // Create the pair transaction
       const tx = createPairTransaction(token0, token1);
 
-      // Simulate first
-      const simulation = await simulateTransaction(suiClient, account, tx);
-      if (!simulation.success) {
-        throw new Error(simulation.error || "Simulation failed");
+      // Use the advanced client for transaction simulation
+      try {
+        // Simulate first with resource management
+        const simulation = await advancedSuiClient.devInspectTransactionBlock({
+          transactionBlock: tx,
+          sender: account.address,
+        });
+
+        if (simulation.effects?.status?.error) {
+          throw new Error(simulation.effects.status.error);
+        }
+
+        // Execute the transaction using Suiet Wallet
+        const result = await signAndExecuteTransaction({
+          transaction: tx as any,
+          options: {
+            showEffects: true,
+            showEvents: true,
+          },
+        });
+
+        // Handle success
+        if (result?.digest) {
+          toast.update(toastId, {
+            render: "Pair Created! Waiting for confirmation...",
+            type: "info",
+            isLoading: true,
+            autoClose: false,
+          });
+
+          // Wait for transaction finality before refreshing data
+          await waitForTransactionFinality(result.digest);
+
+          // Reset network error if successful
+          setNetworkError(null);
+          setHasRetried(false);
+
+          // Use comprehensive refresh function
+          refreshAfterTransaction();
+
+          toast.update(toastId, {
+            render: "Pair Created Successfully!",
+            type: "success",
+            isLoading: false,
+            autoClose: 5000,
+          });
+        } else {
+          throw new Error("Transaction failed: No digest returned");
+        }
+      } catch (error) {
+        // Handle errors
+        console.error("Transaction Error:", error);
+        let errorMessage = error.message || "Unknown error";
+
+        // Check if it's a network resource error
+        if (
+          errorMessage.includes("INSUFFICIENT_RESOURCES") ||
+          errorMessage.includes("Failed to fetch")
+        ) {
+          setNetworkError("Network resource limitations detected");
+
+          // Reset circuit breaker on first retry
+          if (!hasRetried) {
+            advancedSuiClient.resetCircuitBreaker();
+            setHasRetried(true);
+          }
+
+          errorMessage = "Network congestion detected. Please try again.";
+        } else if (errorMessage.includes("308")) {
+          errorMessage = "This pair already exists";
+          checkPairExistence();
+        }
+
+        toast.update(toastId, {
+          render: `Failed to create pair: ${errorMessage}`,
+          type: "error",
+          isLoading: false,
+          autoClose: 5000,
+        });
       }
-
-      // Execute the transaction
-      // Then in your handler function:
-try {
-  // Create the pair transaction
-  const tx = createPairTransaction(token0, token1);
-
-  // Simulate first
-  const simulation = await simulateTransaction(suiClient, account, tx);
-  if (!simulation.success) {
-    throw new Error(simulation.error || "Simulation failed");
-  }
-
-  // Execute the transaction using Suiet Wallet
-  const result = await signAndExecuteTransactionBlock({
-    transactionBlock: tx as any,
-    options: {
-      showEffects: true,
-      showEvents: true,
-    },
-  });
-
-  // Handle success
-  if (result?.digest) {
-    toast.update(toastId, {
-      render: "Pair Created Successfully!",
-      type: "success",
-      isLoading: false,
-      autoClose: 5000,
-    });
-
-    // Check for pair existence after successful creation
-    await checkPairExistence();
-  } else {
-    throw new Error("Transaction failed: No digest returned");
-  }
-} catch (error) {
-  // Handle errors
-  console.error("Transaction Error:", error);
-  let errorMessage = error.message || "Unknown error";
-
-  if (errorMessage.includes("308")) {
-    errorMessage = "This pair already exists";
-    checkPairExistence();
-  }
-
-  toast.update(toastId, {
-    render: `Failed to create pair: ${errorMessage}`,
-    type: "error",
-    isLoading: false,
-    autoClose: 5000,
-  });
-}
     } catch (error: any) {
       console.error("Pair creation failed:", error);
       let errorMessage = error.message || "Unknown error";
 
-      if (errorMessage.includes("308")) {
+      // Check if it's a network resource error
+      if (
+        errorMessage.includes("INSUFFICIENT_RESOURCES") ||
+        errorMessage.includes("Failed to fetch")
+      ) {
+        setNetworkError("Network resource limitations detected");
+        errorMessage = "Network congestion detected. Please try again.";
+      } else if (errorMessage.includes("308")) {
         errorMessage = "Trading pair already exists";
         // Try to find the pair
         checkPairExistence();
@@ -214,40 +376,13 @@ try {
         autoClose: 5000,
       });
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) {
+        setIsLoading(false);
+      }
     }
   };
 
-
-  // Update rendered events only when events actually change
-  useEffect(() => {
-    // Only update rendered events when the events array changes or when currentPairId changes
-    if (events && events.length > 0) {
-      // Use a more robust comparison - check if arrays are different
-      const eventsChanged = 
-        renderedEvents.length !== events.length || 
-        events.some((event, index) => {
-          // Compare critical properties instead of full JSON stringification
-          return !renderedEvents[index] || 
-                 renderedEvents[index].lpCoinId !== event.lpCoinId ||
-                 renderedEvents[index].sender !== event.sender ||
-                 renderedEvents[index].liquidity !== event.liquidity;
-        });
-      
-      if (eventsChanged) {
-        setRenderedEvents(events);
-      }
-    } else if (renderedEvents.length > 0 && events.length === 0) {
-      // Clear rendered events if actual events are empty
-      setRenderedEvents([]);
-    }
-  }, [events, currentPairId]);
-
-
-  
-  
-
-  // Add liquidity handler
+  // Add liquidity handler with improved error handling
   const handleAddLiquidity = async () => {
     if (!account?.address) {
       toast.error("Please connect your wallet");
@@ -265,7 +400,7 @@ try {
     try {
       // Create transaction for adding liquidity
       const addLiquidityTx = await createAddLiquidityTransaction(
-        suiClient,
+        advancedSuiClient, // Use advanced client instead
         account,
         token0,
         token1,
@@ -274,38 +409,51 @@ try {
         currentPairId
       );
 
-      // Simulate first
-      const simulation = await simulateTransaction(
-        suiClient,
-        account,
-        addLiquidityTx
-      );
-      if (!simulation.success) {
-        throw new Error(simulation.error || "Simulation failed");
-      }
-
-      // Execute transaction
       try {
+        // Simulate with improved error handling
+        const simulation = await advancedSuiClient.devInspectTransactionBlock({
+          transactionBlock: addLiquidityTx,
+          sender: account.address,
+        });
+
+        if (simulation.effects?.status?.error) {
+          throw new Error(simulation.effects.status.error);
+        }
+
         // Execute transaction using Suiet Wallet
-        const result = await signAndExecuteTransactionBlock({
-          transactionBlock: addLiquidityTx as any,
+        const result = await signAndExecuteTransaction({
+          transaction: addLiquidityTx as any,
           options: {
             showEffects: true,
             showEvents: true,
           },
         });
-        
+
         if (result?.digest) {
           try {
+            // Reset network error if successful
+            setNetworkError(null);
+            setHasRetried(false);
+
+            toast.update(toastId, {
+              render: "Liquidity Added! Waiting for confirmation...",
+              type: "info",
+              isLoading: true,
+              autoClose: false,
+            });
+
+            // Wait for transaction finality before refreshing data
+            await waitForTransactionFinality(result.digest);
+
             // Process LP events
             await processLPEvent(result.digest);
-            
-            // Refresh balances
-            fetchBalances();
-            
+
+            // Use the comprehensive refresh function only after finality is confirmed
+            refreshAfterTransaction();
+
             // Clear inputs and show success message
             resetAmounts();
-            
+
             toast.update(toastId, {
               render: "Liquidity Added Successfully! 🎉",
               type: "success",
@@ -314,7 +462,10 @@ try {
             });
           } catch (error) {
             console.error("Error processing LP events:", error);
-            
+
+            // Still try to refresh even if event processing fails
+            refreshAfterTransaction();
+
             toast.update(toastId, {
               render: "Liquidity added successfully",
               type: "success",
@@ -327,9 +478,26 @@ try {
         }
       } catch (error) {
         console.error("Transaction error:", error);
-        
+        let errorMessage = error.message || "Unknown error";
+
+        // Check if it's a network resource error
+        if (
+          errorMessage.includes("INSUFFICIENT_RESOURCES") ||
+          errorMessage.includes("Failed to fetch")
+        ) {
+          setNetworkError("Network resource limitations detected");
+
+          // Reset circuit breaker on first retry
+          if (!hasRetried) {
+            advancedSuiClient.resetCircuitBreaker();
+            setHasRetried(true);
+          }
+
+          errorMessage = "Network congestion detected. Please try again.";
+        }
+
         toast.update(toastId, {
-          render: `Transaction failed: ${error.message}`,
+          render: `Transaction failed: ${errorMessage}`,
           type: "error",
           isLoading: false,
           autoClose: 5000,
@@ -339,7 +507,14 @@ try {
       console.error("Transaction failed:", error);
       let errorMessage = error.message || "Unknown error";
 
-      if (errorMessage.includes("Insufficient balance")) {
+      // Check if it's a network resource error
+      if (
+        errorMessage.includes("INSUFFICIENT_RESOURCES") ||
+        errorMessage.includes("Failed to fetch")
+      ) {
+        setNetworkError("Network resource limitations detected");
+        errorMessage = "Network congestion detected. Please try again.";
+      } else if (errorMessage.includes("Insufficient balance")) {
         errorMessage = "Insufficient balance to complete the transaction";
       }
 
@@ -350,137 +525,275 @@ try {
         autoClose: 5000,
       });
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) {
+        setIsLoading(false);
+      }
     }
   };
 
-  // Component for events display
-// Component for displaying events (Without Animation)
-const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
-  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
-
-  // Store the scroll position before updating the table
+  // Update rendered events only when events actually change
   useEffect(() => {
-    const scrollContainer = scrollContainerRef.current;
-    if (!scrollContainer) return;
+    // Only update rendered events when the events array changes or when currentPairId changes
+    if (events && events.length > 0) {
+      // Use a more robust comparison - check if arrays are different
+      const eventsChanged =
+        renderedEvents.length !== events.length ||
+        events.some((event, index) => {
+          // Compare critical properties instead of full JSON stringification
+          return (
+            !renderedEvents[index] ||
+            renderedEvents[index].lpCoinId !== event.lpCoinId ||
+            renderedEvents[index].sender !== event.sender ||
+            renderedEvents[index].liquidity !== event.liquidity
+          );
+        });
 
-    const prevScrollLeft = scrollContainer.scrollLeft;
-
-    // Delay restoring scroll position after rendering
-    setTimeout(() => {
-      if (scrollContainer) {
-        scrollContainer.scrollLeft = prevScrollLeft;
+      if (eventsChanged) {
+        setRenderedEvents(events);
       }
-    }, 0);
-  }, [events]); // Runs every time the events array updates
+    } else if (renderedEvents.length > 0 && events.length === 0) {
+      // Clear rendered events if actual events are empty
+      setRenderedEvents([]);
+    }
+  }, [events, currentPairId]);
 
-  if (!events?.length) {
+  // Function to handle network retry
+  const handleNetworkRetry = useCallback(() => {
+    // Reset circuit breaker
+    advancedSuiClient.resetCircuitBreaker();
+
+    // Retry fetching balances
+    fetchBalances();
+
+    // Clear network error state
+    setNetworkError(null);
+
+    // Reset retry flag
+    setHasRetried(false);
+
+    toast.info("Retrying connection to the network...", {
+      autoClose: 3000,
+    });
+  }, [fetchBalances]);
+
+  // Function to manually force refresh of all data
+  const forceDataRefresh = useCallback(async () => {
+    console.log("Forcing manual data refresh...");
+
+    if (!currentPairId || !token0 || !token1) {
+      console.log("Cannot refresh: missing pair ID or tokens");
+      return;
+    }
+
+    try {
+      console.log("1. Clearing circuit breaker...");
+      advancedSuiClient.resetCircuitBreaker();
+
+      console.log("2. Checking pair existence...");
+      await checkPairExistence();
+
+      console.log("3. Refreshing reserves...");
+      await refreshReserves();
+
+      console.log("4. Fetching pair events...");
+      await fetchPairEvents(currentPairId);
+
+      console.log("5. Refreshing token balances...");
+      await fetchBalances();
+
+      console.log("Manual refresh completed successfully");
+      toast.success("Pool information refreshed successfully");
+    } catch (error) {
+      console.error("Error during manual refresh:", error);
+      toast.error("Failed to refresh pool information");
+    }
+  }, [
+    currentPairId,
+    token0,
+    token1,
+    checkPairExistence,
+    refreshReserves,
+    fetchPairEvents,
+    fetchBalances,
+  ]);
+
+  // Add effect to log when reserves change
+  useEffect(() => {
+    console.log("Reserves updated:", {
+      reserve0: reserves.reserve0,
+      reserve1: reserves.reserve1,
+      timestamp: reserves.timestamp,
+      token0: token0?.symbol,
+      token1: token1?.symbol,
+    });
+  }, [reserves, token0, token1]);
+
+  // Auto-refresh reserves periodically to keep pool information up-to-date
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout;
+
+    if (pairExists && currentPairId) {
+      // Initial refresh
+      refreshReserves();
+
+      // Then set up interval with jitter to prevent network spikes
+      const jitter = Math.floor(Math.random() * 3000); // 0-3s random delay
+      intervalId = setInterval(() => {
+        if (isMounted.current) {
+          refreshReserves();
+        }
+      }, 20000 + jitter); // 20-23s interval with jitter
+    }
+
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [pairExists, currentPairId, refreshReserves]);
+
+  // Component for events display
+  const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
+    const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+    // Store the scroll position before updating the table
+    useEffect(() => {
+      const scrollContainer = scrollContainerRef.current;
+      if (!scrollContainer) return;
+
+      const prevScrollLeft = scrollContainer.scrollLeft;
+
+      // Delay restoring scroll position after rendering
+      setTimeout(() => {
+        if (scrollContainer) {
+          scrollContainer.scrollLeft = prevScrollLeft;
+        }
+      }, 0);
+    }, [events]); // Runs every time the events array updates
+
+    if (!events?.length) {
+      return (
+        <div className="text-center text-gray-400 mt-4 bg-indigo-900/20 p-6 rounded-xl border border-indigo-500/30">
+          <AlertCircle className="w-10 h-10 mx-auto mb-2 text-indigo-300" />
+          <p>No liquidity events found for this pair</p>
+        </div>
+      );
+    }
+
     return (
-      <div className="text-center text-gray-400 mt-4 bg-indigo-900/20 p-6 rounded-xl border border-indigo-500/30">
-        <AlertCircle className="w-10 h-10 mx-auto mb-2 text-indigo-300" />
-        <p>No liquidity events found for this pair</p>
+      <div
+        className="mt-6 overflow-x-auto rounded-xl border border-indigo-500/30 bg-indigo-900/20 backdrop-blur-sm"
+        ref={scrollContainerRef} // Attach ref to the scroll container
+      >
+        <table className="min-w-full divide-y divide-indigo-500/20">
+          <thead className="bg-indigo-900/30">
+            <tr>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Amount 0
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Amount 1
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Liquidity
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                LP Token ID
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Provider
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Token Types
+              </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Event Type
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-indigo-500/20 bg-indigo-900/10">
+            {events.map((event, idx) => (
+              <tr
+                key={`${event.lpCoinId || idx}-${event.sender || idx}`}
+                className="hover:bg-indigo-900/20 transition-colors"
+              >
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  {event.amount0 ? (
+                    <span className="font-mono">
+                      {formatLargeNumber(event.amount0)}
+                    </span>
+                  ) : (
+                    "N/A"
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  {event.amount1 ? (
+                    <span className="font-mono">
+                      {formatLargeNumber(event.amount1)}
+                    </span>
+                  ) : (
+                    "N/A"
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-indigo-400 whitespace-nowrap font-medium">
+                  {event.liquidity ? (
+                    <span className="font-mono">
+                      {formatLargeNumber(event.liquidity)}
+                    </span>
+                  ) : (
+                    "N/A"
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-indigo-500 whitespace-nowrap">
+                  {event.lpCoinId ? (
+                    <a
+                      href={`https://suiscan.xyz/devnet/object/${event.lpCoinId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                    >
+                      {`${event.lpCoinId.slice(0, 6)}...${event.lpCoinId.slice(
+                        -4
+                      )}`}
+                    </a>
+                  ) : (
+                    "N/A"
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  {event.sender ? (
+                    <a
+                      href={`https://suiscan.xyz/devnet/address/${event.sender}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                    >
+                      {`${event.sender.slice(0, 6)}...${event.sender.slice(
+                        -4
+                      )}`}
+                    </a>
+                  ) : (
+                    "N/A"
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  <div className="flex flex-col gap-1">
+                    <span>{getTokenTypeName(event.token0Type) || "N/A"}</span>
+                    <span>{getTokenTypeName(event.token1Type) || "N/A"}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  <span className="px-2 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs">
+                    {event.type ? event.type.split("::").pop() || "N/A" : "N/A"}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     );
-  }
-
-  return (
-    <div 
-      className="mt-6 overflow-x-auto rounded-xl border border-indigo-500/30 bg-indigo-900/20 backdrop-blur-sm"
-      ref={scrollContainerRef} // Attach ref to the scroll container
-    >
-      <table className="min-w-full divide-y divide-indigo-500/20">
-        <thead className="bg-indigo-900/30">
-          <tr>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Amount 0</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Amount 1</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Liquidity</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">LP Token ID</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Provider</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Token Types</th>
-            <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">Event Type</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-indigo-500/20 bg-indigo-900/10">
-          {events.map((event, idx) => (
-            <tr key={`${event.lpCoinId || idx}-${event.sender || idx}`} className="hover:bg-indigo-900/20 transition-colors">
-              <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
-                {event.amount0 ? <span className="font-mono">{formatLargeNumber(event.amount0)}</span> : "N/A"}
-              </td>
-              <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
-                {event.amount1 ? <span className="font-mono">{formatLargeNumber(event.amount1)}</span> : "N/A"}
-              </td>
-              <td className="px-3 py-3 text-xs text-indigo-400 whitespace-nowrap font-medium">
-                {event.liquidity ? <span className="font-mono">{formatLargeNumber(event.liquidity)}</span> : "N/A"}
-              </td>
-              <td className="px-3 py-3 text-xs text-indigo-500 whitespace-nowrap">
-                {event.lpCoinId ? (
-                  <a
-                    href={`https://suiscan.xyz/object/${event.lpCoinId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hover:underline"
-                  >
-                    {`${event.lpCoinId.slice(0, 6)}...${event.lpCoinId.slice(-4)}`}
-                  </a>
-                ) : (
-                  "N/A"
-                )}
-              </td>
-              <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
-                {event.sender ? (
-                  <a
-                    href={`https://suiscan.xyz/address/${event.sender}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hover:underline"
-                  >
-                    {`${event.sender.slice(0, 6)}...${event.sender.slice(-4)}`}
-                  </a>
-                ) : (
-                  "N/A"
-                )}
-              </td>
-              <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
-                <div className="flex flex-col gap-1">
-                  <span>{getTokenTypeName(event.token0Type) || "N/A"}</span>
-                  <span>{getTokenTypeName(event.token1Type) || "N/A"}</span>
-                </div>
-              </td>
-              <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
-                <span className="px-2 py-1 rounded-full bg-indigo-500/10 text-indigo-400 text-xs">
-                  {event.type ? event.type.split("::").pop() || "N/A" : "N/A"}
-                </span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-});
-
-
-// Events Section (Without Animation)
-<div className="mt-8 bg-gray-900/30 backdrop-blur-xl rounded-3xl border border-indigo-500/20 shadow-lg p-6">
-  <div className="flex justify-between items-center mb-4">
-    <h2 className="text-xl text-white font-semibold flex items-center gap-2">
-      <BarChart3 className="w-5 h-5 text-indigo-400" />
-      <span className="bg-gradient-to-r from-indigo-300 via-purple-300 to-blue-300 bg-clip-text text-transparent">
-        Recent Liquidity Events
-      </span>
-    </h2>
-    <button
-      onClick={() => fetchPairEvents(currentPairId || "")}
-      disabled={!currentPairId}
-      className="text-xs px-3 py-1.5 rounded-lg bg-indigo-800/30 text-indigo-300 hover:bg-indigo-700/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
-    >
-      <RefreshCcw className="w-3.5 h-3.5" />
-      Refresh
-    </button>
-  </div>
-  <EventsDisplay events={events} />
-</div>;
-
+  });
 
   // Animation variants
   const containerVariants = {
@@ -508,6 +821,36 @@ const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
       <StyledToastContainer />
 
       <div className="min-h-screen w-full flex flex-col items-center justify-center">
+        {/* Add Network Status Bar at the top of the component */}
+        <div className="w-[95%] max-w-xl mb-2">
+          <NetworkStatusBar onRetry={handleNetworkRetry} />
+        </div>
+
+        {/* Display custom network error message if needed */}
+        {networkError && (
+          <div className="w-[95%] max-w-xl mb-2">
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-xl bg-red-900/20 border border-red-500/30 flex items-start gap-3"
+            >
+              <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm text-red-300">{networkError}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  The application will automatically retry connections.
+                </p>
+              </div>
+              <button
+                onClick={handleNetworkRetry}
+                className="px-3 py-1.5 rounded-lg text-xs bg-red-500/20 hover:bg-red-500/30 text-red-300 transition-colors"
+              >
+                Retry Now
+              </button>
+            </motion.div>
+          </div>
+        )}
+
         <motion.div
           className="relative w-[95%] max-w-xl"
           initial="hidden"
@@ -544,7 +887,7 @@ const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
                     }`}
                   >
                     {isRefreshingPair ? (
-                      <RefreshCcw className="w-4 h-4 animate-spin" />
+                      <RefreshCcw className="w-4 h-4 animate-spin cursor-pointer" />
                     ) : pairExists ? (
                       <span>✓ Trading Pair Active</span>
                     ) : (
@@ -588,6 +931,7 @@ const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
                       showInput={pairExists}
                       balance={balance0}
                       isInput={true}
+                      centerButton={true}
                     />
                   </div>
                 </motion.div>
@@ -606,6 +950,7 @@ const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
                       showInput={pairExists}
                       balance={balance1}
                       isInput={true}
+                      centerButton={true}
                     />
                   </div>
                 </motion.div>
@@ -722,11 +1067,21 @@ const EventsDisplay = React.memo(({ events }: { events: LPEvent[] }) => {
               </h2>
 
               <button
-                onClick={() => fetchPairEvents(currentPairId || "")}
-                disabled={!currentPairId}
+                onClick={() => {
+                  // Reset circuit breaker before fetching events to ensure clean state
+                  advancedSuiClient.resetCircuitBreaker();
+                  // Refresh both events and reserves
+                  fetchPairEvents(currentPairId || "");
+                  refreshReserves();
+                }}
+                disabled={!currentPairId || isRefreshingPair}
                 className="text-xs px-3 py-1.5 rounded-lg bg-indigo-800/30 text-indigo-300 hover:bg-indigo-700/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
               >
-                <RefreshCcw className="w-3.5 h-3.5" />
+                <RefreshCcw
+                  className={`w-3.5 h-3.5 ${
+                    isRefreshingPair ? "animate-spin" : ""
+                  }`}
+                />
                 Refresh
               </button>
             </div>

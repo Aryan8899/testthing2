@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useWallet } from "@suiet/wallet-kit"; 
+import { useWallet } from "@suiet/wallet-kit";
 import { motion, AnimatePresence } from "framer-motion";
 import SimpleBar from "simplebar-react";
 import "simplebar/dist/simplebar.min.css";
@@ -181,7 +181,7 @@ const EnhancedPoolsInterface: React.FC = () => {
       const data = await response.json();
       setHistoryData(data);
 
-      if (data.length > 0  && !isInitialLoad) {
+      if (data.length > 0 && !isInitialLoad) {
         toast.success("Successfully fetched transaction history");
       }
     } catch (error) {
@@ -190,7 +190,6 @@ const EnhancedPoolsInterface: React.FC = () => {
         toast.error("Failed to fetch transaction history");
       }
       toast.error("Failed to fetch transaction history");
-
     } finally {
       setIsLoading(false);
       setRefreshing(false);
@@ -332,12 +331,12 @@ const EnhancedPoolsInterface: React.FC = () => {
             variants={itemVariants}
             className="flex justify-center sm:justify-start mb-6 relative"
           >
-            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 p-1 flex w-full max-w-md">
+            <div className="bg-gray-800/50 backdrop-blur-sm rounded-xl border border-gray-700/50 p-1 flex w-full max-w-md flex-wrap sm:flex-nowrap">
               {["history", "all-pools", "my-positions"].map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`flex-1 py-2 px-3 rounded-lg text-sm sm:text-base font-medium transition-all duration-300 relative ${
+                  className={`flex-1 py-2 px-3 rounded-lg text-sm sm:text-base font-medium transition-all duration-300 relative cursor-pointer ${
                     activeTab === tab
                       ? "text-white"
                       : "text-gray-400 hover:text-gray-200"
@@ -400,7 +399,7 @@ const EnhancedPoolsInterface: React.FC = () => {
               <button
                 onClick={() => fetchHistoryData()}
                 disabled={refreshing || !account?.address}
-                className="p-2 rounded-xl bg-gray-800/60 hover:bg-gray-700/60 text-gray-300 transition-colors border border-gray-700/50 flex items-center justify-center"
+                className="p-2 rounded-xl bg-gray-800/60 hover:bg-gray-700/60 text-gray-300 transition-colors border border-gray-700/50 flex items-center justify-center cursor-pointer"
                 title="Refresh data"
               >
                 <RefreshCw
@@ -410,7 +409,7 @@ const EnhancedPoolsInterface: React.FC = () => {
 
               <button
                 onClick={() => navigate("/addliquidity")}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2 shadow-lg shadow-cyan-500/20"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2 shadow-lg shadow-cyan-500/20 cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4" />
                 <span className="hidden sm:inline">Add Liquidity</span>
@@ -418,7 +417,7 @@ const EnhancedPoolsInterface: React.FC = () => {
 
               <button
                 onClick={() => navigate("/removeliquidity")}
-                className="px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2 shadow-lg shadow-red-500/20"
+                className="px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-medium transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center gap-2 shadow-lg shadow-red-500/20 cursor-pointer"
               >
                 <MinusCircle className="w-4 h-4" />
                 <span className="hidden sm:inline">Remove Liquidity</span>
@@ -472,7 +471,7 @@ const EnhancedPoolsInterface: React.FC = () => {
                                   <div className="flex items-center">
                                     <Link className="w-4 h-4 text-cyan-400 mr-2" />
                                     <a
-                                      href={`https://suiscan.xyz/object/${entry.lpCoinId}`}
+                                      href={`https://suiscan.xyz/devnet/object/${entry.lpCoinId}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-cyan-400 hover:underline font-mono text-xs"
@@ -485,7 +484,7 @@ const EnhancedPoolsInterface: React.FC = () => {
                                   <div className="flex items-center">
                                     <Link className="w-4 h-4 text-cyan-400 mr-2" />
                                     <a
-                                      href={`https://suiscan.xyz/object/${entry.pairId}`}
+                                      href={`https://suiscan.xyz/devnet/object/${entry.pairId}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-cyan-400 hover:underline font-mono text-xs"
@@ -498,7 +497,7 @@ const EnhancedPoolsInterface: React.FC = () => {
                                   <div className="flex items-center">
                                     <Link className="w-4 h-4 text-cyan-400 mr-2" />
                                     <a
-                                      href={`https://suiscan.xyz/transaction/${entry.transactionHash}`}
+                                      href={`https://suiscan.xyz/devnet/transaction/${entry.transactionHash}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-cyan-400 hover:underline font-mono text-xs"
@@ -574,7 +573,7 @@ const EnhancedPoolsInterface: React.FC = () => {
                                   <div className="flex items-center">
                                     <Wallet className="w-4 h-4 text-cyan-400 mr-2" />
                                     <a
-                                      href={`https://suiscan.xyz/address/${entry.sender}`}
+                                      href={`https://suiscan.xyz/devnet/address/${entry.sender}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       className="text-cyan-400 hover:underline font-mono text-xs"
@@ -716,7 +715,7 @@ const EnhancedPoolsInterface: React.FC = () => {
 
             <div className="mt-2 sm:mt-0 flex items-center">
               <button
-                onClick={() => window.open("https://suiscan.xyz/", "_blank")}
+                onClick={() => window.open("https://suiscan.xyz/devnet/", "_blank")}
                 className="flex items-center text-cyan-400 hover:text-cyan-300 transition-colors"
               >
                 <span>View more on SuiScan</span>

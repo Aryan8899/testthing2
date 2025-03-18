@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import BackgroundEffects from "../components/BackgroundEffects";
-import { ConnectWallet_Button } from "./ConnectWalletButton";
 import { useWallet } from "@suiet/wallet-kit";
+import { AllDefaultWallets } from "@suiet/wallet-kit";
 import {
-  Wallet,
   Search,
   X,
   Menu,
-  ChevronDown,
   ExternalLink,
+  Coins,
+  LayoutDashboard,
+  ArrowRightLeft,
+  ChevronDown,
+  Copy,
+  LogOut,
+  Check,
 } from "lucide-react";
 import { debounce } from "lodash";
 import SimpleBar from "simplebar-react";
@@ -30,16 +35,47 @@ interface TokenInfo {
   balance: string;
   price?: number;
   change24h?: number;
+  allObjectIds?: string[]; // Track all object IDs for merging functionality
 }
 
 // Navigation items
 const navItems = [
-  { label: "Swap", path: "/swap", isExternal: false },
-  { label: "Pool", path: "/pool", isExternal: false },
-  { label: "Earn", path: "https://suitrumpnew.vercel.app/", isExternal: true },
-  { label: "SuiTrump", path: "https://sui-trump.com", isExternal: true },
-  { label: "Bridge", path: "https://bridge.sui.io/", isExternal: true },
-  { label: "Docs", path: "https://docs.sui.io/", isExternal: true },
+  {
+    label: "Swap",
+    path: "/swap",
+    isExternal: false,
+    icon: <ArrowRightLeft className="w-4 h-4" />,
+  },
+  {
+    label: "Pool",
+    path: "/pool",
+    isExternal: false,
+    icon: <LayoutDashboard className="w-4 h-4" />,
+  },
+  {
+    label: "Earn",
+    path: "https://suitrumpnew.vercel.app/",
+    isExternal: true,
+    icon: <Coins className="w-4 h-4" />,
+  },
+  {
+    label: "SuiTrump",
+    path: "https://sui-trump.com",
+    isExternal: true,
+    icon: <ExternalLink className="w-4 h-4" />,
+  },
+  {
+    label: "Bridge",
+    path: "https://bridge.sui.io/",
+    isExternal: true,
+    icon: <ArrowRightLeft className="w-4 h-4 rotate-90" />,
+  },
+  {
+    label: "Docs",
+    path: "https://docs.sui.io/",
+    isExternal: true,
+    icon: <ExternalLink className="w-4 h-4" />,
+  },
 ];
 
 // Constants
@@ -62,7 +98,7 @@ const formatBalance = (balance: string, decimals: number = 9): string => {
 
 const Header: React.FC = () => {
   // State
-  const [dropdownVisible, setDropdownVisible] = useState<boolean>(false);
+  const [walletMenuOpen, setWalletMenuOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
@@ -70,16 +106,45 @@ const Header: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
   const suiClient = new SuiClient({ url: "https://fullnode.devnet.sui.io/" });
 
   // Refs
   const searchRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const walletMenuRef = useRef<HTMLDivElement>(null);
+  const searchOverlayRef = useRef<HTMLDivElement>(null);
 
   // Hooks
-  const { account, connected, signAndExecuteTransaction } = useWallet();
-
+  const { account, connected, disconnect, connecting, select } = useWallet();
   const navigate = useNavigate();
+
+  // Effect for handling clicks outside search and wallet menu
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      // Handle search outside clicks
+      if (
+        searchRef.current &&
+        !searchRef.current.contains(event.target as Node) &&
+        !searchOverlayRef.current?.contains(event.target as Node)
+      ) {
+        setIsSearchFocused(false);
+      }
+
+      // Handle wallet menu outside clicks
+      if (
+        walletMenuRef.current &&
+        !walletMenuRef.current.contains(event.target as Node)
+      ) {
+        setWalletMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
 
   // Set active tab based on current URL
   useEffect(() => {
@@ -92,34 +157,27 @@ const Header: React.FC = () => {
     }
   }, []);
 
-  // Token fetching function
-  const fetchBalance = async (
-    tokenId: string,
-    decimals: number
-  ): Promise<string> => {
-    if (!tokenId || !account?.address) return "0";
-    try {
-      const coin = await suiClient.getObject({
-        id: tokenId,
-        options: { showContent: true },
-      });
-
-      if (
-        coin.data?.content &&
-        "fields" in coin.data.content &&
-        typeof coin.data.content.fields === "object" &&
-        coin.data.content.fields &&
-        "balance" in coin.data.content.fields
-      ) {
-        const balance = coin.data.content.fields.balance as string;
-        return formatBalance(balance, decimals);
-      }
-    } catch (error) {
-      console.error("Error fetching balance:", error);
+  // Copy address to clipboard
+  const copyAddress = () => {
+    if (account?.address) {
+      navigator.clipboard.writeText(account.address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
-    return "0";
   };
 
+  // Handle wallet connection
+  const handleWalletConnect = () => {
+    if (connected) {
+      // Toggle the wallet menu dropdown if already connected
+      setWalletMenuOpen(!walletMenuOpen);
+    } else if (!connected && !connecting) {
+      // Just call select() to trigger the wallet selection modal
+      select("Sui Wallet");
+    }
+  };
+
+  // Token fetching function
   const fetchTokens = async (): Promise<void> => {
     if (!account) return;
     setIsLoading(true);
@@ -132,10 +190,12 @@ const Header: React.FC = () => {
           showContent: true,
           showDisplay: true,
         },
+        limit: 50, // Increase limit to get more tokens at once
       });
 
       const coinTypeMap = new Map<string, TokenInfo>();
 
+      // Process all objects to group by coin type
       for (const obj of objects.data) {
         if (!obj.data?.type || !obj.data.type.includes("::coin::")) continue;
 
@@ -168,25 +228,39 @@ const Header: React.FC = () => {
 
         const balance = BigInt(rawBalance);
 
+        // Skip zero balance tokens
+        if (balance <= 0n) continue;
+
+        // Utilize Sui's merge functionality by combining balances for the same coin type
         const existingToken = coinTypeMap.get(coinType);
         if (existingToken) {
-          // Aggregate balances for duplicate tokens
+          // Aggregate balances for duplicate tokens (Sui merge functionality)
           existingToken.balance = (
             BigInt(existingToken.balance) + balance
           ).toString();
+
+          // Keep track of all object IDs for the same token type
+          if (!existingToken.allObjectIds) {
+            existingToken.allObjectIds = [existingToken.id, obj.data.objectId];
+          } else {
+            existingToken.allObjectIds.push(obj.data.objectId);
+          }
         } else {
+          // Fetch metadata for this coin type
           let metadata;
           try {
             metadata = await suiClient.getCoinMetadata({ coinType });
           } catch {
+            // Fallback metadata
             metadata = {
               name: coinType.split("::").pop() || "Unknown",
               symbol: coinType.split("::").pop() || "Unknown",
               image: DEFAULT_TOKEN_IMAGE,
-              decimals: 0,
+              decimals: 9, // Default decimals for Sui tokens
             };
           }
 
+          // Create new token entry
           coinTypeMap.set(coinType, {
             id: obj.data.objectId,
             type: typeString,
@@ -195,16 +269,22 @@ const Header: React.FC = () => {
               symbol:
                 metadata?.symbol || coinType.split("::").pop() || "Unknown",
               image: metadata?.iconUrl || DEFAULT_TOKEN_IMAGE,
-              decimals: metadata?.decimals || 0,
+              decimals: metadata?.decimals || 9,
             },
             balance: balance.toString(),
             price: Math.random() * 100, // Mock price data
             change24h: Math.random() * 20 - 10, // Mock change data
+            allObjectIds: [obj.data.objectId],
           });
         }
       }
 
-      setTokens(Array.from(coinTypeMap.values()));
+      // Convert map to array and sort by balance (highest first)
+      const tokenArray = Array.from(coinTypeMap.values()).sort((a, b) => {
+        return Number(BigInt(b.balance) - BigInt(a.balance));
+      });
+
+      setTokens(tokenArray);
       if (searchQuery) {
         debouncedSearch(searchQuery);
       }
@@ -245,11 +325,7 @@ const Header: React.FC = () => {
   }, [searchQuery, tokens]);
 
   // Event handlers
-  const handleWalletClick = (): void => {
-    setDropdownVisible(!dropdownVisible);
-  };
-
-  const toggleMenu = (): void => {
+  const toggleMobileMenu = (): void => {
     setIsMenuOpen(!isMenuOpen);
   };
 
@@ -260,20 +336,13 @@ const Header: React.FC = () => {
     }
   };
 
-  const handleSearchBlur = (e: React.FocusEvent): void => {
-    if (!searchRef.current?.contains(e.relatedTarget as Node)) {
-      if (!searchQuery) {
-        setIsSearchFocused(false);
-      }
-    }
-  };
-
   const clearSearch = (): void => {
     setSearchQuery("");
+    if (!isSearchFocused) return;
     setIsSearchFocused(false);
     setFilteredTokens([]);
     if (searchInputRef.current) {
-      searchInputRef.current.focus();
+      searchInputRef.current.blur();
     }
   };
 
@@ -293,19 +362,19 @@ const Header: React.FC = () => {
     }
   };
 
-  // Token item component
+  // Token item component with enhanced glass effect
   const TokenItem: React.FC<{ token: TokenInfo }> = ({ token }) => (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
+      transition={{ type: "spring", stiffness: 400, damping: 30 }}
       className="group relative overflow-hidden rounded-xl"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-blue-500/0 via-purple-500/0 to-blue-500/0 group-hover:from-blue-500/10 group-hover:via-purple-500/10 group-hover:to-blue-500/10 transition-all duration-500 ease-out rounded-xl" />
+      <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/0 via-indigo-500/0 to-purple-500/0 group-hover:from-cyan-500/10 group-hover:via-indigo-500/10 group-hover:to-purple-500/10 transition-all duration-500 ease-out rounded-xl" />
 
-      <div className="p-3 flex items-center gap-3 backdrop-blur-sm bg-white/5 rounded-xl">
+      <div className="p-3 flex items-center gap-3 backdrop-blur-lg bg-white/5 rounded-xl border border-white/5 group-hover:border-cyan-500/20 transition-all duration-300">
         <div className="relative flex-shrink-0">
-          <div className="absolute -inset-1 bg-gradient-to-r from-blue-500/0 to-purple-500/0 group-hover:from-blue-500/30 group-hover:to-purple-500/30 rounded-full blur-md transition-all duration-500 opacity-0 group-hover:opacity-100" />
+          <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/0 to-purple-500/0 group-hover:from-cyan-500/30 group-hover:to-purple-500/30 rounded-full blur-md transition-all duration-500 opacity-0 group-hover:opacity-100" />
           <img
             src={token.metadata?.image || DEFAULT_TOKEN_IMAGE}
             alt={token.metadata?.symbol}
@@ -316,35 +385,35 @@ const Header: React.FC = () => {
           />
           {token.change24h !== undefined && (
             <div
-              className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-[#04112a] z-20 ${
-                token.change24h >= 0 ? "bg-green-500" : "bg-red-500"
+              className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-gray-900 z-20 ${
+                token.change24h >= 0 ? "bg-emerald-500" : "bg-rose-500"
               }`}
             />
           )}
         </div>
 
         <div className="flex flex-col flex-1 min-w-0">
-          <span className="text-white font-medium truncate group-hover:text-blue-300 transition-colors duration-300">
+          <span className="text-white font-semibold truncate group-hover:text-cyan-300 transition-colors duration-300">
             {token.metadata?.symbol}
           </span>
-          <span className="text-sm text-white/60 truncate">
+          <span className="text-sm text-white/80 truncate">
             {token.metadata?.name}
           </span>
         </div>
 
         <div className="flex flex-col items-end">
-          <span className="text-sm text-white font-medium group-hover:text-blue-300 transition-colors duration-300">
+          <span className="text-sm text-white font-medium group-hover:text-cyan-300 transition-colors duration-300">
             {token.balance}
           </span>
 
           {token.price && (
-            <span className="text-xs text-white/60">
+            <span className="text-xs text-white/80">
               ${token.price.toFixed(2)}
               {token.change24h !== undefined && (
                 <span
                   className={`ml-1 ${
-                    token.change24h >= 0 ? "text-green-400" : "text-red-400"
-                  }`}
+                    token.change24h >= 0 ? "text-emerald-400" : "text-rose-400"
+                  } font-medium`}
                 >
                   {token.change24h >= 0 ? "↑" : "↓"}
                   {Math.abs(token.change24h).toFixed(1)}%
@@ -357,13 +426,14 @@ const Header: React.FC = () => {
     </motion.div>
   );
 
-  // Navigation link component
+  // Navigation link component with enhanced visual effects
   const NavLink: React.FC<{
     label: string;
     path: string;
     isExternal: boolean;
     isMobile?: boolean;
-  }> = ({ label, path, isExternal, isMobile = false }) => {
+    icon?: React.ReactNode;
+  }> = ({ label, path, isExternal, isMobile = false, icon }) => {
     const isActive = activeTab === label;
 
     return (
@@ -373,15 +443,16 @@ const Header: React.FC = () => {
         onClick={() => handleNavigation(path, isExternal, label)}
         className={`
           relative px-4 py-2 rounded-xl overflow-hidden cursor-pointer
-          ${isMobile ? "w-full" : ""}
-          ${isActive ? "text-white" : "text-white hover:text-blue-300"}
+          ${isMobile ? "w-full flex items-center gap-3" : ""}
+          ${isActive ? "text-white" : "text-white/80 hover:text-cyan-300"}
+          transition-all duration-300
         `}
       >
         {/* Background with animated gradient */}
         {isActive && (
           <motion.div
             layoutId={isMobile ? "mobileActiveBackground" : "activeBackground"}
-            className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 animate-gradient-x"
+            className="absolute inset-0 rounded-xl bg-gradient-to-r from-cyan-600 via-indigo-600 to-purple-600 animate-gradient-x"
             transition={{ type: "spring", duration: 0.3 }}
           />
         )}
@@ -390,12 +461,13 @@ const Header: React.FC = () => {
         <div
           className={`
           absolute inset-0 opacity-0 hover:opacity-100 transition-opacity duration-300 rounded-xl
-          ${!isActive && "bg-white/10 backdrop-blur-sm"}
+          ${!isActive && "bg-white/10 backdrop-blur-lg"}
         `}
         />
 
         {/* Content */}
-        <div className="relative z-10 flex items-center justify-center gap-1">
+        <div className="relative z-10 flex items-center justify-center gap-2">
+          {isMobile && icon}
           <span
             className={`transition-all duration-300 ${
               isActive ? "font-medium" : ""
@@ -404,28 +476,36 @@ const Header: React.FC = () => {
             {label}
           </span>
 
-          {isExternal && <ExternalLink className="w-3.5 h-3.5 opacity-70" />}
+          {isExternal && !isMobile && (
+            <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+          )}
         </div>
       </motion.button>
     );
   };
 
-  // Connect wallet button with animations
-  const ConnectWalletButton: React.FC = () => {
+  // Custom Connect Wallet Button Component
+  const ConnectWalletButton = () => {
     return (
-      <motion.div
-        className="relative group"
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.98 }}
+      <button
+        onClick={handleWalletConnect}
+        className="h-10 px-4 py-2 rounded-xl font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 border border-indigo-500/30 transition-all duration-300 shadow-lg shadow-indigo-500/20 flex items-center gap-2 cursor-pointer"
       >
-        {/* Animated glow effect */}
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 rounded-xl blur opacity-75 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 animate-gradient-x"></div>
-
-        {/* Button container */}
-        <div className="relative">
-          <ConnectWalletButton />
-        </div>
-      </motion.div>
+        {connecting ? (
+          <div className="flex items-center gap-2">
+            <div className="animate-spin h-4 w-4 border-2 border-white border-t-transparent rounded-full"></div>
+            <span>Connecting...</span>
+          </div>
+        ) : connected ? (
+          <div className="flex items-center gap-2">
+            <span className="bg-green-500 h-2.5 w-2.5 rounded-full"></span>
+            <span>{getShortAddress(account?.address)}</span>
+            <ChevronDown className="w-4 h-4 text-gray-300" />
+          </div>
+        ) : (
+          <span>Connect Wallet</span>
+        )}
+      </button>
     );
   };
 
@@ -440,16 +520,16 @@ const Header: React.FC = () => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 1 }}
-          className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-purple-500 to-transparent"
+          className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-indigo-500 to-transparent"
         />
 
-        {/* Ultra modern glass effect */}
-        <div className="relative backdrop-blur-lg bg-[#080e24]/90 border-b border-white/10">
+        {/* Enhanced glass effect header */}
+        <div className="relative backdrop-blur-xl bg-[#080e24]/70 border-b border-white/10 shadow-lg shadow-black/5">
           <div className="max-w-7xl mx-auto px-4">
             <div className="flex items-center justify-between h-16 lg:h-20">
-              {/* Logo and Navigation - moved to the left */}
-              <div className="flex items-center gap-8">
-                {/* Animated logo */}
+              {/* Logo and Navigation - left side */}
+              <div className="flex items-center gap-6 md:gap-8">
+                {/* Animated logo with enhanced glow */}
                 <motion.div
                   className="cursor-pointer"
                   onClick={() => navigate("/")}
@@ -459,7 +539,7 @@ const Header: React.FC = () => {
                   <div className="relative">
                     {/* Animated glow effect */}
                     <motion.div
-                      className="absolute -inset-2 bg-blue-500/20 rounded-full blur-lg"
+                      className="absolute -inset-2 bg-cyan-500/20 rounded-full blur-lg"
                       animate={{
                         scale: [1, 1.1, 1],
                         opacity: [0.5, 0.8, 0.5],
@@ -472,7 +552,7 @@ const Header: React.FC = () => {
                     />
 
                     <h1 className="relative text-2xl font-extrabold tracking-tight">
-                      <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500 animate-gradient-x">
+                      <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-indigo-500 animate-gradient-x">
                         Sui
                       </span>
                       <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 to-purple-500 animate-gradient-x">
@@ -482,7 +562,7 @@ const Header: React.FC = () => {
                   </div>
                 </motion.div>
 
-                {/* Desktop Navigation */}
+                {/* Desktop Navigation - Enhanced with more space and better styling */}
                 <nav className="hidden lg:flex items-center gap-1">
                   {navItems.map((item) => (
                     <NavLink
@@ -490,16 +570,17 @@ const Header: React.FC = () => {
                       label={item.label}
                       path={item.path}
                       isExternal={item.isExternal}
+                      icon={item.icon}
                     />
                   ))}
                 </nav>
 
-                {/* Mobile Menu Button */}
+                {/* Mobile Menu Button - Enhanced with better hover effects */}
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={toggleMenu}
-                  className="lg:hidden bg-white/10 hover:bg-white/20 p-2 rounded-xl transition-colors duration-200"
+                  onClick={toggleMobileMenu}
+                  className="lg:hidden bg-white/5 hover:bg-white/10 p-2 rounded-xl transition-colors duration-200 border border-white/5 hover:border-white/10 shadow-lg"
                 >
                   <AnimatePresence mode="wait">
                     {isMenuOpen ? (
@@ -527,26 +608,24 @@ const Header: React.FC = () => {
                 </motion.button>
               </div>
 
-              {/* RIGHT-SIDE: Search and Connect Wallet */}
-              <div className="flex items-center gap-4">
+              {/* RIGHT-SIDE: Search and Connect Wallet - Ensuring wallet is rightmost */}
+              <div className="flex items-center gap-4 justify-end w-full max-w-[500px] ml-auto">
                 {/* Desktop Search */}
-                <div ref={searchRef} className="relative hidden sm:block">
-                  <div
-                    className={`relative transition-all duration-300 ${
-                      isSearchFocused ? "w-72" : "w-60"
-                    }`}
-                    onClick={handleSearchFocus}
-                  >
+                <div
+                  ref={searchRef}
+                  className="relative hidden sm:block flex-grow"
+                >
+                  <div className={`relative transition-all duration-300`}>
                     {/* Search icon */}
                     <div className="absolute left-3 top-0 bottom-0 flex items-center pointer-events-none">
                       <Search
                         className={`h-4 w-4 ${
-                          isSearchFocused ? "text-blue-400" : "text-white/50"
+                          isSearchFocused ? "text-cyan-400" : "text-white/50"
                         }`}
                       />
                     </div>
 
-                    {/* Input field */}
+                    {/* Input field with enhanced styling */}
                     <input
                       ref={searchInputRef}
                       type="text"
@@ -554,13 +633,12 @@ const Header: React.FC = () => {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       onFocus={handleSearchFocus}
-                      onBlur={handleSearchBlur}
                       className={`
                         w-full bg-white/5 text-white pl-10 pr-10 py-2 rounded-xl
-                        border transition-all duration-300 backdrop-blur-md
+                        border transition-all duration-300 backdrop-blur-xl
                         ${
                           isSearchFocused
-                            ? "border-blue-500/50 bg-white/10 shadow-lg shadow-blue-500/10"
+                            ? "border-cyan-500/50 bg-white/10 shadow-lg shadow-cyan-500/10"
                             : "border-white/5 hover:border-white/10"
                         }
                         focus:outline-none
@@ -576,120 +654,149 @@ const Header: React.FC = () => {
                         <X className="h-4 w-4" />
                       </button>
                     )}
-
-                    {/* Search results */}
-                    <AnimatePresence>
-                      {isSearchFocused && searchQuery && (
-                        <>
-                          {/* Overlay */}
-                          <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            exit={{ opacity: 0 }}
-                            transition={{ duration: 0.2 }}
-                            className="fixed inset-0 bg-black/50 z-[101]"
-                            onClick={() => {
-                              setIsSearchFocused(false);
-                              setSearchQuery("");
-                            }}
-                          />
-
-                          {/* Results dropdown */}
-                          <motion.div
-                            initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                            animate={{ opacity: 1, y: 0, scale: 1 }}
-                            exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                            transition={{ duration: 0.2 }}
-                            className="absolute left-0 right-0 mt-2 bg-[#0c1638]/95 backdrop-blur-xl rounded-xl border border-white/10 shadow-xl overflow-hidden z-[102]"
-                          >
-                            <SimpleBar style={{ maxHeight: "450px" }}>
-                              <div className="p-2 space-y-2">
-                                {isLoading ? (
-                                  <div className="flex flex-col items-center justify-center p-8">
-                                    <motion.div
-                                      className="w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full mb-4"
-                                      animate={{ rotate: 360 }}
-                                      transition={{
-                                        duration: 1,
-                                        ease: "linear",
-                                        repeat: Infinity,
-                                      }}
-                                    />
-                                    <p className="text-white/70">
-                                      Loading tokens...
-                                    </p>
-                                  </div>
-                                ) : filteredTokens.length > 0 ? (
-                                  filteredTokens.map((token) => (
-                                    <TokenItem key={token.id} token={token} />
-                                  ))
-                                ) : (
-                                  <div className="flex flex-col items-center justify-center p-8 text-center">
-                                    <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-3">
-                                      <Search className="w-6 h-6 text-white/30" />
-                                    </div>
-                                    <p className="text-white/70">
-                                      No tokens found
-                                    </p>
-                                    <p className="text-sm text-white/40 mt-1">
-                                      Try a different search term
-                                    </p>
-                                  </div>
-                                )}
-                              </div>
-                            </SimpleBar>
-                          </motion.div>
-                        </>
-                      )}
-                    </AnimatePresence>
                   </div>
+
+                  {/* Search results with enhanced glass effect */}
+                  <AnimatePresence>
+                    {isSearchFocused && (
+                      <>
+                        {/* Search results dropdown */}
+                        <motion.div
+                          ref={searchOverlayRef}
+                          initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 400,
+                            damping: 30,
+                            duration: 0.2,
+                          }}
+                          className="absolute left-0 right-0 mt-2 bg-[#0c1638]/95 backdrop-blur-xl rounded-xl border border-cyan-500/20 shadow-xl overflow-hidden z-[102]"
+                        >
+                          <SimpleBar style={{ maxHeight: "450px" }}>
+                            <div className="p-2 space-y-2">
+                              {isLoading ? (
+                                <div className="flex flex-col items-center justify-center p-8">
+                                  <motion.div
+                                    className="w-10 h-10 border-2 border-cyan-500 border-t-transparent rounded-full mb-4"
+                                    animate={{ rotate: 360 }}
+                                    transition={{
+                                      duration: 1,
+                                      ease: "linear",
+                                      repeat: Infinity,
+                                    }}
+                                  />
+                                  <p className="text-white/90 font-medium">
+                                    Loading tokens...
+                                  </p>
+                                </div>
+                              ) : filteredTokens.length > 0 ? (
+                                filteredTokens.map((token) => (
+                                  <TokenItem key={token.id} token={token} />
+                                ))
+                              ) : (
+                                <div className="flex flex-col items-center justify-center p-8 text-center">
+                                  <div className="w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-3">
+                                    <Search className="w-6 h-6 text-cyan-400/60" />
+                                  </div>
+                                  <p className="text-white/90 font-medium">
+                                    No tokens found
+                                  </p>
+                                  <p className="text-sm text-white/60 mt-1">
+                                    Try a different search term
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </SimpleBar>
+                        </motion.div>
+                      </>
+                    )}
+                  </AnimatePresence>
                 </div>
 
-                {/* Mobile Search Button */}
+                {/* Mobile Search Button with enhanced styling */}
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  className="sm:hidden bg-white/5 hover:bg-white/10 p-2 rounded-xl transition-colors duration-200"
-                  onClick={() => setIsSearchFocused(!isSearchFocused)}
+                  className="sm:hidden bg-white/5 hover:bg-white/10 p-2 rounded-xl transition-all duration-200 border border-white/5 hover:border-cyan-500/30"
+                  onClick={handleSearchFocus}
                 >
                   <Search className="w-5 h-5 text-white" />
                 </motion.button>
 
-                {/* Connect Wallet Button - Now positioned on the right */}
-                <div className="hidden sm:block">
-                  <ConnectWallet_Button />
-                </div>
-
-                {/* Mobile Wallet Button */}
-                <div className="sm:hidden relative z-[150]">
-                  <motion.button
-                    whileHover={{ scale: 1.1 }}
-                    whileTap={{ scale: 0.9 }}
-                    className="relative group"
-                    onClick={handleWalletClick}
-                  >
-                    {/* Animated glow */}
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-blue-600 to-purple-600 rounded-full blur opacity-75 group-hover:opacity-100 transition duration-300"></div>
-
-                    {/* Button */}
-                    <div className="relative p-2 bg-[#131644] rounded-full">
-                      <Wallet className="w-5 h-5 text-white" />
+                {/* Connect Wallet Button - Positioned at rightmost end */}
+                <div className="hidden sm:block" ref={walletMenuRef}>
+                  <div className="relative group transform hover:scale-[1.02] active:scale-[0.98] transition-all duration-300">
+                    <div className="relative z-10">
+                      <ConnectWalletButton />
                     </div>
-                  </motion.button>
 
-                  <AnimatePresence>
-                    {dropdownVisible && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 5, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 5, scale: 0.95 }}
-                        transition={{ duration: 0.2 }}
-                        className="absolute top-[100%] right-0 w-56 bg-[#0c1638] backdrop-blur-xl rounded-xl border border-white/10 shadow-xl z-[9999] p-2"
-                      >
-                        <ConnectWallet_Button />
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                    {/* Wallet menu dropdown */}
+                    <AnimatePresence>
+                      {walletMenuOpen && connected && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 5, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: 5, scale: 0.95 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 400,
+                            damping: 30,
+                          }}
+                          className="absolute right-0 mt-2 w-72 bg-[#0c1638]/95 backdrop-blur-xl rounded-xl border border-indigo-500/20 shadow-xl overflow-hidden z-[9999]"
+                        >
+                          <div className="p-4 border-b border-white/10">
+                            <div className="flex items-center gap-3 mb-2">
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 flex items-center justify-center text-white">
+                                <span className="text-lg font-bold">
+                                  {account?.address?.substring(0, 1)}
+                                </span>
+                              </div>
+                              <div>
+                                <p className="text-sm text-white font-medium">
+                                  Connected Wallet
+                                </p>
+                                <p className="text-xs text-white/60">
+                                  Sui Wallet
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="bg-white/5 rounded-lg p-2 flex items-center justify-between mt-2 ">
+                              <p className="text-sm text-white/80 font-mono">
+                                {getShortAddress(account?.address)}
+                              </p>
+                              <button
+                                onClick={copyAddress}
+                                className="p-1.5 rounded-md bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors cursor-pointer"
+                              >
+                                {copied ? (
+                                  <Check className="w-3.5 h-3.5" />
+                                ) : (
+                                  <Copy className="w-3.5 h-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="p-4">
+                            <button
+                              onClick={() => {
+                                disconnect();
+                                setWalletMenuOpen(false);
+                              }}
+                              className="flex items-center gap-2 w-full py-2 px-3 text-left rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition-colors cursor-pointer"
+                            >
+                              <LogOut className="w-4 h-4" />
+                              <span>Disconnect</span>
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
               </div>
             </div>
@@ -697,46 +804,129 @@ const Header: React.FC = () => {
         </div>
       </header>
 
-      {/* Mobile Navigation Menu */}
+      {/* Mobile Navigation Menu with enhanced glass effect */}
       <AnimatePresence>
         {isMenuOpen && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.3 }}
-            className="lg:hidden backdrop-blur-xl bg-[#0c1638]/95 border-b border-white/10 overflow-hidden z-50 p-4"
+            transition={{
+              type: "spring",
+              stiffness: 300,
+              damping: 30,
+              duration: 0.3,
+            }}
+            className="lg:hidden backdrop-blur-xl bg-gradient-to-b from-[#0c1638]/95 to-[#131644]/95 border-b border-white/10 overflow-hidden z-50"
           >
-            <nav className="grid grid-cols-2 gap-2 p-3">
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.label}
-                  label={item.label}
-                  path={item.path}
-                  isExternal={item.isExternal}
-                  isMobile={true}
-                />
-              ))}
-            </nav>
+            <div className="p-5">
+              {/* Mobile connect wallet button at top of menu for visibility */}
+              <div className="mb-6 flex justify-center">
+                <div className="relative">
+                  <ConnectWalletButton />
+                </div>
+                <AnimatePresence>
+                  {walletMenuOpen && connected && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 5, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 5, scale: 0.95 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 30,
+                      }}
+                      className="absolute right-0 mt-2 w-72 bg-[#0c1638]/95 backdrop-blur-xl rounded-xl border border-indigo-500/20 shadow-xl overflow-hidden z-[9999]"
+                    >
+                      <div className="p-4 border-b border-white/10">
+                        <div className="flex items-center gap-3 mb-2">
+                          <div className="w-10 h-10 rounded-full bg-gradient-to-r from-cyan-500 to-indigo-500 flex items-center justify-center text-white">
+                            <span className="text-lg font-bold">
+                              {account?.address?.substring(0, 1)}
+                            </span>
+                          </div>
+                          <div>
+                            <p className="text-sm text-white font-medium">
+                              Connected Wallet
+                            </p>
+                            <p className="text-xs text-white/60">Sui Wallet</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-white/5 rounded-lg p-2 flex items-center justify-between mt-2">
+                          <p className="text-sm text-white/80 font-mono">
+                            {getShortAddress(account?.address)}
+                          </p>
+                          <button
+                            onClick={copyAddress}
+                            className="p-1.5 rounded-md bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/30 transition-colors"
+                          >
+                            {copied ? (
+                              <Check className="w-3.5 h-3.5" />
+                            ) : (
+                              <Copy className="w-3.5 h-3.5" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="p-4">
+                        <button
+                          onClick={() => {
+                            disconnect();
+                            setWalletMenuOpen(false);
+                          }}
+                          className="flex items-center gap-2 w-full py-2 px-3 text-left rounded-lg hover:bg-white/10 text-white/80 hover:text-white transition-colors"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span>Disconnect</span>
+                        </button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+              {/* Navigation grid with enhanced spacing and styling */}
+              <nav className="grid grid-cols-1 gap-3 p-2">
+                {navItems.map((item) => (
+                  <NavLink
+                    key={item.label}
+                    label={item.label}
+                    path={item.path}
+                    isExternal={item.isExternal}
+                    isMobile={true}
+                    icon={item.icon}
+                  />
+                ))}
+              </nav>
+            </div>
+
+            {/* Decorative gradient bottom edge */}
+            <div className="h-1 bg-gradient-to-r from-cyan-500/0 via-indigo-500/50 to-purple-500/0"></div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Mobile Search Overlay */}
+      {/* Mobile Search Overlay with improved glass effect */}
       <AnimatePresence>
         {isSearchFocused && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed sm:hidden inset-0 bg-[#0c1638]/95 backdrop-blur-xl z-[200] p-4"
+            transition={{
+              type: "spring",
+              stiffness: 300,
+              damping: 30,
+              duration: 0.3,
+            }}
+            className="fixed sm:hidden inset-0 bg-gradient-to-b from-[#0c1638]/95 to-[#131644]/95 backdrop-blur-xl z-[200] p-4"
           >
             <div className="flex flex-col h-full">
               <div className="flex items-center gap-2 mb-4">
                 <div className="relative flex-1">
                   <div className="absolute left-3 h-full flex items-center top-0">
-                    <Search className="h-4 w-4 text-blue-400" />
+                    <Search className="h-4 w-4 text-cyan-400" />
                   </div>
 
                   <input
@@ -745,7 +935,7 @@ const Header: React.FC = () => {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     autoFocus
-                    className="w-full h-12 bg-white/5 text-white pl-10 pr-10 rounded-xl border border-blue-500/30 focus:outline-none"
+                    className="w-full h-12 bg-white/5 text-white pl-10 pr-10 rounded-xl border border-cyan-500/30 focus:outline-none"
                   />
 
                   {searchQuery && (
@@ -765,20 +955,20 @@ const Header: React.FC = () => {
                     setIsSearchFocused(false);
                     setSearchQuery("");
                   }}
-                  className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors duration-200"
+                  className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-colors duration-200 border border-white/10"
                 >
                   <X className="h-5 w-5" />
                 </motion.button>
               </div>
 
-              {/* Mobile search results */}
+              {/* Mobile search results with enhanced styling */}
               <div className="flex-1 overflow-hidden">
                 <SimpleBar style={{ maxHeight: "calc(100vh - 100px)" }}>
                   <div className="space-y-2 pr-2">
                     {isLoading ? (
                       <div className="flex flex-col items-center justify-center p-12">
                         <motion.div
-                          className="w-12 h-12 border-2 border-blue-500 border-t-transparent rounded-full mb-4"
+                          className="w-12 h-12 border-2 border-cyan-500 border-t-transparent rounded-full mb-4"
                           animate={{ rotate: 360 }}
                           transition={{
                             duration: 1,
@@ -786,7 +976,9 @@ const Header: React.FC = () => {
                             repeat: Infinity,
                           }}
                         />
-                        <p className="text-white/70">Loading tokens...</p>
+                        <p className="text-white/90 font-medium">
+                          Loading tokens...
+                        </p>
                       </div>
                     ) : filteredTokens.length > 0 ? (
                       filteredTokens.map((token) => (
@@ -794,27 +986,35 @@ const Header: React.FC = () => {
                       ))
                     ) : searchQuery ? (
                       <div className="flex flex-col items-center justify-center p-12 text-center">
-                        <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
-                          <Search className="w-8 h-8 text-white/30" />
+                        <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-cyan-500/10">
+                          <Search className="w-8 h-8 text-cyan-400/60" />
                         </div>
-                        <p className="text-white/70">
+                        <p className="text-white/90 font-medium">
                           No tokens found matching "{searchQuery}"
                         </p>
-                        <p className="text-sm text-white/40 mt-2">
+                        <p className="text-sm text-white/60 mt-2">
                           Try a different search term
                         </p>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center justify-center p-12 text-center">
-                        <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
-                          <Search className="w-8 h-8 text-white/30" />
+                        <div className="w-16 h-16 bg-gradient-to-r from-cyan-500/10 to-purple-500/10 rounded-full flex items-center justify-center mb-4 border border-white/10 shadow-lg shadow-cyan-500/10">
+                          <Search className="w-8 h-8 text-cyan-400/70" />
                         </div>
-                        <p className="text-white/70">
+                        <p className="text-white/90 font-medium">
                           Type to search for tokens
                         </p>
-                        <p className="text-sm text-white/40 mt-2">
+                        <p className="text-sm text-white/70 mt-2">
                           Search by name, symbol, or address
                         </p>
+                        <div className="mt-6 flex justify-center">
+                          <div className="px-4 py-2 bg-white/5 rounded-lg border border-white/10 text-white/80 text-sm">
+                            <span className="text-cyan-400 font-medium">
+                              Tip:
+                            </span>{" "}
+                            Your tokens will be automatically merged by type
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

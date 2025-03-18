@@ -270,7 +270,7 @@ export default function Footer() {
           {/* Back to top button */}
           <button
             onClick={scrollToTop}
-            className="fixed bottom-8 right-8 bg-gradient-to-r from-cyan-500/80 to-purple-500/80 backdrop-blur-md p-3 rounded-full shadow-lg hover:shadow-cyan-500/20 transition-all duration-300 transform hover:scale-110 hover:-translate-y-1"
+            className="fixed bottom-8 right-8 bg-gradient-to-r from-cyan-500/80 to-purple-500/80 backdrop-blur-md p-3 rounded-full shadow-lg hover:shadow-cyan-500/20 transition-all duration-300 transform hover:scale-110 hover:-translate-y-1 cursor-pointer"
             aria-label="Scroll to top"
           >
             <FaChevronUp className="text-white" size={16} />

@@ -23,7 +23,7 @@ interface SwapTokenSelectorProps {
   onToken0Select: (token: Token | null) => void;
   onToken1Select: (token: Token | null) => void;
   showInput?: boolean;
-  pairExists?: boolean; // Add this prop
+  pairExists?: boolean;
 }
 
 const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
@@ -37,13 +37,11 @@ const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
   onToken0Select,
   onToken1Select,
   showInput = true,
-  pairExists = false, // Added param with default value
+  pairExists = false,
 }) => {
   const [balance0, setBalance0] = useState("0");
   const [balance1, setBalance1] = useState("0");
   const { account } = useWallet();
-
-  
 
   // Memoize event handlers to prevent unnecessary re-renders
   const handleSwapTokens = useCallback(() => {
@@ -85,7 +83,7 @@ const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
         const coinType = coinTypeMatch[1];
 
         // Get all coins of this type and aggregate their balances
-        const coins = await fetchAllCoins(suiClient, account.address, coinType);
+        const coins = await fetchAllCoins(account.address, coinType);
 
         if (!isMounted) return;
 
@@ -150,12 +148,16 @@ const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
           className="relative z-10 bg-indigo-900/50 backdrop-blur-lg text-indigo-300 rounded-full p-3 border border-indigo-500/40 shadow-lg hover:shadow-indigo-500/30 hover:border-indigo-400/50 transition-colors"
           aria-label="Swap tokens"
         >
-          <ArrowDownUp className="w-5 h-5" />
+          <ArrowDownUp className="w-5 h-5 cursor-pointer" />
         </motion.button>
       </div>
     ),
     [handleSwapTokens]
   );
+
+  // Fix: Simplified showInput logic - only require tokens to be selected
+  const shouldShowInputToken0 = !!(showInput && token0);
+  const shouldShowInputToken1 = !!(showInput && token1);
 
   return (
     <div className="space-y-2">
@@ -167,9 +169,10 @@ const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
         onSelect={onToken0Select}
         balance={balance0}
         isInput={true}
-        showInput={!!(showInput && token0 && token1 && pairExists)}
+        showInput={shouldShowInputToken0}
         label="You Pay"
         selectedToken1={token1}
+        centerButton={true} // Center the token selector button
       />
 
       {/* Swap button */}
@@ -183,8 +186,9 @@ const SwapTokenSelector: React.FC<SwapTokenSelectorProps> = ({
         onSelect={onToken1Select}
         balance={balance1}
         isInput={false}
-        showInput={!!(showInput && token0 && token1 && pairExists)}
+        showInput={shouldShowInputToken1}
         label="You Receive"
+        centerButton={true} // Center the token selector button
       />
     </div>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -46,6 +47,13 @@ interface GradientButtonProps {
   primary?: boolean;
   className?: string;
   onClick?: () => void;
+}
+
+// Define types for component props
+interface SocialIconProps {
+  Icon: ElementType;
+  href: string;
+  className?: string;
 }
 
 // Enhanced social icon component with animations
@@ -149,23 +157,30 @@ const GradientButton: React.FC<GradientButtonProps> = ({
   children,
   primary = true,
   className = "",
-  onClick = () => {}, // Default empty function to make onClick optional
-}) => (
-  <button
-    onClick={onClick}
-    className={`
-      px-6 py-3.5 font-medium rounded-xl transition-all duration-300 transform hover:-translate-y-1 flex items-center gap-2 active:scale-95 will-change-transform
-      ${
-        primary
-          ? "bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white shadow-lg"
-          : "backdrop-blur-2xl bg-white/10 hover:bg-white/15 text-cyan-400"
-      }
-      ${className}
-    `}
-  >
-    {children}
-  </button>
-);
+}) => {
+  const navigate = useNavigate();
+
+  const handleClick = () => {
+    navigate("/swap");
+  };
+
+  return (
+    <button
+      onClick={handleClick}
+      className={`
+        px-6 py-3.5 font-medium rounded-xl transition-all duration-300 transform hover:-translate-y-1 flex items-center gap-2 active:scale-95 will-change-transform
+        ${
+          primary
+            ? "bg-gradient-to-r from-green-500 to-cyan-500 hover:from-green-600 hover:to-cyan-600 text-white shadow-lg"
+            : "backdrop-blur-2xl bg-white/10 hover:bg-white/15 text-cyan-400"
+        }
+        ${className}
+      `}
+    >
+      {children}
+    </button>
+  );
+};
 
 interface BannerItem {
   image: string;
@@ -202,6 +217,7 @@ export default function Page() {
   const ctaRef = useRef<HTMLElement>(null);
 
   const [isVideoVisible, setIsVideoVisible] = useState(false);
+  const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [visibleSections, setVisibleSections] = useState<VisibleSections>({
     hero: false,
     features: false,
@@ -327,12 +343,40 @@ export default function Page() {
     observeElement(dexRef, "dex");
     observeElement(ctaRef, "cta");
 
-    // Smoother video loading
-    if (videoRef.current) {
-      videoRef.current.addEventListener("loadeddata", () => {
-        // Ensure video container is visible only after video is loaded
-        setIsVideoVisible(true);
-      });
+    // Optimized video loading
+    const videoElement = videoRef.current;
+    if (videoElement) {
+      // Only start loading when in viewport
+      const videoObserver = new IntersectionObserver(
+        (entries) => {
+          if (entries[0].isIntersecting) {
+            // Set a low priority to not block other resources
+            // videoElement.preload = "auto";
+
+            // Add event listeners for video loading
+            videoElement.addEventListener("loadeddata", () => {
+              setIsVideoLoaded(true);
+              setIsVideoVisible(true);
+            });
+
+            videoElement.addEventListener("canplay", () => {
+              setIsVideoLoaded(true);
+            });
+
+            // Start playing when possible
+            videoElement.play().catch((err) => {
+              console.warn("Video autoplay prevented:", err);
+              // Show video anyway even if autoplay is blocked
+              setIsVideoVisible(true);
+            });
+
+            videoObserver.disconnect();
+          }
+        },
+        { rootMargin: "200px" } // Start loading 200px before it comes into view
+      );
+
+      videoObserver.observe(videoElement);
     }
 
     return () => {
@@ -348,18 +392,10 @@ export default function Page() {
     nextImage.src = banners[nextIndex].image;
   }, [currentSlide, banners]);
 
-  // Function to smoothly change slides with a slight delay
-  const changeSlide = (index: number) => {
-    // Add a small timeout for a more polished transition feel
-    setTimeout(() => {
-      setCurrentSlide(index);
-    }, 50);
-  };
-
   return (
-    <main className="min-h-screen overflow-x-hidden perspective-1000">
+    <main className="min-h-screen perspective-1000">
       {/* Enhanced Rotating Banner Section */}
-      <section className=" mt-4 relative h-[200px]   ">
+      <section className="mt-4 relative h-[200px]">
         <div
           className="flex transition-transform duration-500 ease-in-out"
           style={{ transform: `translateX(-${currentSlide * 100}%)` }}
@@ -370,6 +406,7 @@ export default function Page() {
                 src={banner.image || "/placeholder.svg"}
                 alt={banner.alt}
                 className="w-full h-[200px] object-contain"
+                loading={index === currentSlide ? "eager" : "lazy"}
               />
             </div>
           ))}
@@ -383,6 +420,7 @@ export default function Page() {
                 currentSlide === index ? "bg-white" : "bg-white/50"
               }`}
               onClick={() => setCurrentSlide(index)}
+              aria-label={`View banner ${index + 1}`}
             />
           ))}
         </div>
@@ -394,6 +432,7 @@ export default function Page() {
               (prev) => (prev - 1 + banners.length) % banners.length
             )
           }
+          aria-label="Previous banner"
         >
           <ChevronLeft className="h-6 w-6" />
         </button>
@@ -401,6 +440,7 @@ export default function Page() {
         <button
           className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/20 hover:bg-black/40 text-white p-2 rounded-full"
           onClick={() => setCurrentSlide((prev) => (prev + 1) % banners.length)}
+          aria-label="Next banner"
         >
           <ChevronRight className="h-6 w-6" />
         </button>
@@ -448,40 +488,61 @@ export default function Page() {
             </div>
           </div>
 
+          {/* Optimized Video Section */}
           <div className="order-first md:order-last" ref={videoContainerRef}>
             <div
-              className={`transition-all duration-1000 ${
+              className={`transition-all duration-700 ${
                 isVideoVisible
                   ? "opacity-100 translate-y-0"
                   : "opacity-0 translate-y-10"
               }`}
             >
               <div className="relative">
-                {/* Video glass container */}
-                {/* <div className="absolute -inset-4 backdrop-blur-xl bg-white/5 rounded-3xl"></div> */}
+                {/* Video Placeholder (shown before video loads) */}
+                {!isVideoLoaded && (
+                  <div className="w-full max-w-[600px] mx-auto h-[340px] bg-gradient-to-br from-blue-900/30 to-purple-900/30 rounded-xl flex items-center justify-center">
+                    <div className="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                )}
 
+                {/* Optimized Video Element */}
                 <video
                   ref={videoRef}
                   autoPlay
                   loop
                   muted
                   playsInline
-                  className="w-full max-w-[600px] mx-auto relative hover:shadow-cyan-500/20 transition-all duration-500 z-10"
+                  preload="none" // Only load when needed
+                  className={`w-full max-w-[600px] mx-auto relative z-10 rounded-xl ${
+                    isVideoLoaded ? "opacity-100" : "opacity-0"
+                  }`}
+                  style={{
+                    willChange: "transform",
+                    transform: "translateZ(0)", // Hardware acceleration
+                    transition: "opacity 0.5s ease-in",
+                  }}
                 >
                   <source src={Trump} type="video/webm" />
                   Your browser does not support the video tag.
                 </video>
 
-                {/* Floating particles decorations with improved animation */}
-                <div className="absolute top-1/4 right-1/4 w-4 h-4 bg-cyan-500 rounded-full opacity-70 animate-float-smooth will-change-transform"></div>
-                <div
-                  className="absolute bottom-1/3 left-1/4 w-3 h-3 bg-purple-500 rounded-full opacity-70 animate-float-smooth will-change-transform"
-                  style={{ animationDelay: "1s" }}
-                ></div>
-                <div
-                  className="absolute top-2/3 right-1/3 w-2 h-2 bg-green-500 rounded-full opacity-70 animate-float-smooth will-change-transform"
-                  style={{ animationDelay: "2s" }}
-                ></div>
+                {/* Reduced and optimized particles */}
+                {isVideoLoaded && (
+                  <>
+                    <div
+                      className="absolute top-1/4 right-1/4 w-4 h-4 bg-cyan-500 rounded-full opacity-60"
+                      style={{
+                        transform: "translateZ(0)",
+                      }}
+                    ></div>
+                    <div
+                      className="absolute bottom-1/3 left-1/4 w-3 h-3 bg-purple-500 rounded-full opacity-60"
+                      style={{
+                        transform: "translateZ(0)",
+                      }}
+                    ></div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -560,9 +621,6 @@ export default function Page() {
         <div className="container mx-auto grid md:grid-cols-2 gap-12 items-center">
           <div>
             <div className="relative">
-              {/* Glass effect behind image */}
-              {/* <div className="absolute -inset-6 backdrop-blur-xl bg-white/5 rounded-3xl"></div> */}
-
               <img
                 src="/Suitrump1.png"
                 alt="SuiTrump DEX"
@@ -570,12 +628,9 @@ export default function Page() {
                 loading="lazy"
               />
 
-              {/* Light glow effects */}
-              <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-cyan-500/20 filter blur-xl animate-pulse-slow"></div>
-              <div
-                className="absolute -bottom-4 -left-4 w-20 h-20 rounded-full bg-purple-500/20 filter blur-xl animate-pulse-slow"
-                style={{ animationDelay: "2s" }}
-              ></div>
+              {/* Light glow effects - static versions to reduce animation overhead */}
+              <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-cyan-500/20 filter blur-xl"></div>
+              <div className="absolute -bottom-4 -left-4 w-20 h-20 rounded-full bg-purple-500/20 filter blur-xl"></div>
             </div>
           </div>
 
@@ -632,12 +687,9 @@ export default function Page() {
       >
         <div className="container mx-auto">
           <div className="backdrop-blur-xl bg-white/5 rounded-3xl p-12 shadow-2xl relative overflow-hidden transform transition-all duration-500 hover:bg-white/8">
-            {/* Light effects with animation */}
-            <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-cyan-500/10 filter blur-xl animate-pulse-slow"></div>
-            <div
-              className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-purple-500/10 filter blur-xl animate-pulse-slow"
-              style={{ animationDelay: "3s" }}
-            ></div>
+            {/* Static light effects (no animation) to reduce overhead */}
+            <div className="absolute -top-20 -right-20 w-64 h-64 rounded-full bg-cyan-500/10 filter blur-xl"></div>
+            <div className="absolute -bottom-20 -left-20 w-64 h-64 rounded-full bg-purple-500/10 filter blur-xl"></div>
 
             <div className="text-center space-y-8 relative z-10">
               <h2 className="text-4xl font-bold text-white">
@@ -672,27 +724,19 @@ export default function Page() {
             100% { transform: translateY(0) translateZ(0); }
           }
           
-          .animate-float-smooth {
-            animation: float-smooth 6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-          }
-          
-          .animate-pulse-slow {
-            animation: pulse 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-          }
-          
-          .will-change-transform {
-            will-change: transform;
+          /* Override global body styles to fix double scrollbar */
+          html, body {
+            overflow-x: hidden;
+            max-width: 100vw;
           }
           
           /* Optimize animations for devices that prefer reduced motion */
           @media (prefers-reduced-motion: reduce) {
-            .animate-float-smooth,
-            .animate-pulse-slow {
-              animation: none;
-            }
-            
-            * {
-              transition-duration: 0.1s !important;
+            *, *::before, *::after {
+              animation-duration: 0.01ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.01ms !important;
+              scroll-behavior: auto !important;
             }
           }
         `}

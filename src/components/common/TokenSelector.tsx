@@ -8,9 +8,7 @@ import "simplebar/dist/simplebar.min.css";
 import { Search, X, Wallet, AlertCircle } from "lucide-react";
 import { useTokens } from "../../hooks/useTokens";
 import { Token, TokenInfo, DEFAULT_TOKEN_IMAGE } from "../../utils/tokenUtils";
-// import { formatBalance } from "../../utils/formatUtils";
 import { usePair } from "../../hooks/usePair";
-
 
 interface TokenSelectorProps {
   onSelect: (token: Token | null) => void;
@@ -21,10 +19,10 @@ interface TokenSelectorProps {
   label: string;
   balance?: string;
   isInput?: boolean;
-  selectedToken1?: Token | null; // ADD: Second token
+  selectedToken1?: Token | null;
+  centerButton?: boolean; // New prop to center the selector button
+  disableInput?: boolean; // New prop to explicitly disable input functionality
 }
-
-
 
 // Token skeleton for loading state (memoized)
 const TokenSkeleton = memo(() => (
@@ -84,7 +82,7 @@ const TokenListItem = memo(
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: index * 0.03 }}
-        className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-indigo-900/20 transition-colors"
+        className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-indigo-900/30 transition-colors"
         onClick={() => {
           onSelect({
             id: token.id,
@@ -102,20 +100,20 @@ const TokenListItem = memo(
             <img
               src={token.metadata?.image || DEFAULT_TOKEN_IMAGE}
               alt={token.metadata?.symbol || "Token"}
-              className="w-full h-full object-cover rounded-full border border-gray-700"
+              className="w-full h-full object-cover rounded-full border border-indigo-700/50"
               loading="lazy"
               onError={(e) => {
                 (e.target as HTMLImageElement).src = DEFAULT_TOKEN_IMAGE;
-              }} // Fallback in case of image loading failure
+              }}
             />
             {token.allObjectIds && token.allObjectIds.length > 1 && (
-              <div className="absolute -top-1 -right-1 bg-cyan-500 text-xs text-black font-bold rounded-full w-5 h-5 flex items-center justify-center">
+              <div className="absolute -top-1 -right-1 bg-indigo-500 text-xs text-white font-bold rounded-full w-5 h-5 flex items-center justify-center">
                 {token.allObjectIds.length}
               </div>
             )}
           </div>
           <div className="text-left">
-            <div className="font-medium text-white group-hover:text-cyan-400 transition-colors">
+            <div className="font-medium text-white group-hover:text-indigo-400 transition-colors">
               {token.metadata?.symbol || "Unknown"}
             </div>
             <div className="text-sm text-gray-400 truncate max-w-[120px]">
@@ -124,16 +122,14 @@ const TokenListItem = memo(
           </div>
         </div>
         <div className="text-right">
-        <div className="font-medium text-white group-hover:text-cyan-400 transition-colors text-sm sm:text-base">
-  {formattedBalance}
-</div>
-
+          <div className="font-medium text-white group-hover:text-indigo-400 transition-colors text-sm sm:text-base">
+            {formattedBalance}
+          </div>
         </div>
       </motion.button>
     );
   }
 );
-
 
 const TokenSelector: React.FC<TokenSelectorProps> = ({
   onSelect,
@@ -144,6 +140,8 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   label,
   balance = "0",
   isInput = true,
+  centerButton = false,
+  disableInput = false,
 }) => {
   // State management
   const [isOpen, setIsOpen] = useState(false);
@@ -159,6 +157,10 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     setSearchQuery,
     fetchTokens,
   } = useTokens();
+
+  // Determine if we should show input fields
+  // If disableInput is true, we never show input regardless of other props
+  const shouldShowInput = !disableInput && showInput && selectedToken;
 
   // Handle click outside modal
   useEffect(() => {
@@ -189,11 +191,12 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   // Handle amount input change
   const handleAmountChange = useCallback(
     (value: string) => {
+      if (disableInput) return; // Don't allow changes if input is disabled
       if (/^\d*\.?\d*$/.test(value) || value === "") {
         onAmountChange(value);
       }
     },
-    [onAmountChange]
+    [onAmountChange, disableInput]
   );
 
   // Handle token selection
@@ -223,12 +226,12 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   };
 
   return (
-    <div className="rounded-2xl px-4 py-4 border border-gray-700/50 bg-gray-800/30 backdrop-blur-sm hover:border-cyan-500/30 transition-all duration-300 hover:shadow-lg hover:shadow-cyan-500/10">
+    <div className="rounded-2xl px-5 py-4 border border-indigo-700/30 bg-gray-800/40 backdrop-blur-sm hover:border-indigo-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/10">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-gray-400">{label}</span>
-        {selectedToken && showInput && (
+        {selectedToken && (
           <span className="text-sm text-gray-400 flex items-center">
-            <Wallet className="w-3.5 h-3.5 text-cyan-400 mr-1" />
+            <Wallet className="w-3.5 h-3.5 text-indigo-400 mr-1" />
             Balance: {balance}
           </span>
         )}
@@ -236,38 +239,40 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
 
       <div
         className={`flex ${
-          !showInput || !selectedToken ? "justify-center" : "justify-between"
-        } items-center gap-2`}
+          centerButton && !shouldShowInput
+            ? "justify-center"
+            : "justify-between"
+        } items-center gap-3`}
       >
-       {showInput && selectedToken && (
-  <div className="flex-1 min-w-0 relative">
-    <div className="flex items-center">
-      <input
-        type="text"
-        value={amount}
-        onChange={(e) => handleAmountChange(e.target.value)}
-        className="bg-transparent border-none text-lg sm:text-xl w-full p-1 sm:p-2 focus:outline-none text-white transition-all duration-200 focus:ring-0 pr-16"
-        placeholder="0.0"
-        readOnly={!isInput}
-      />
-      {isInput && parseFloat(balance) > 0 && (
-        <button
-          onClick={() => onAmountChange(balance)}
-          className="absolute right-1 sm:right-2 top-1/2 transform -translate-y-1/2 text-2xs sm:text-xs bg-cyan-800/50 hover:bg-cyan-700/60 text-cyan-300 px-1 sm:px-2 py-0.5 sm:py-1 rounded-md sm:rounded-lg transition-colors whitespace-nowrap min-w-12"
-        >
-          MAX
-        </button>
-      )}
-    </div>
-  </div>
-)}
+        {shouldShowInput && (
+          <div className="flex-1 min-w-0 relative">
+            <div className="flex items-center">
+              <input
+                type="text"
+                value={amount}
+                onChange={(e) => handleAmountChange(e.target.value)}
+                className="bg-transparent border-none text-lg sm:text-xl w-full p-1 sm:p-2 focus:outline-none text-white transition-all duration-200 focus:ring-0 pr-16"
+                placeholder="0.0"
+                readOnly={!isInput || disableInput}
+              />
+              {isInput && !disableInput && parseFloat(balance) > 0 && (
+                <button
+                  onClick={() => onAmountChange(balance)}
+                  className="absolute right-1 sm:right-2 top-1/2 transform -translate-y-1/2 text-2xs sm:text-xs bg-indigo-800/50 hover:bg-indigo-700/60 text-indigo-300 px-1 sm:px-2 py-0.5 sm:py-1 rounded-md sm:rounded-lg transition-colors whitespace-nowrap min-w-12"
+                >
+                  MAX
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         <button
           onClick={handleOpenModal}
-          className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:bg-gray-700/50 active:scale-95 ${
+          className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:bg-indigo-700/30 active:scale-95 ${
             selectedToken
               ? "bg-gray-800/50 border-gray-700/50"
-              : "bg-cyan-600/20 border-cyan-500/30 text-cyan-400"
+              : "bg-indigo-600/20 border-indigo-500/30 text-indigo-400"
           } border`}
         >
           {selectedToken ? (
@@ -283,7 +288,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                     {selectedToken.symbol}
                   </span>
                   <span className="text-xs text-gray-400">
-                    {/* {selectedToken.name} */}
+                    {/* Simplified for cleaner UI */}
                   </span>
                 </div>
               </div>
@@ -302,7 +307,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
               </svg>
             </>
           ) : (
-            <span className="font-semibold">Select Token</span>
+            <span className="font-semibold cursor-pointer">Select Token</span>
           )}
         </button>
       </div>
@@ -316,18 +321,18 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
               animate="visible"
               exit="exit"
               variants={backdropVariants}
-              className="fixed inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center z-[9999] p-4"
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[9999] p-4"
               style={{ overflowY: "auto" }}
             >
               <motion.div
                 variants={modalVariants}
                 ref={modalRef}
-                className="relative bg-gray-900/95 backdrop-blur-xl rounded-2xl p-5 w-full max-w-md border border-cyan-500/30 max-h-[85vh] flex flex-col shadow-2xl shadow-cyan-600/20"
+                className="relative bg-gray-900/95 backdrop-blur-xl rounded-2xl p-5 w-full max-w-md border border-indigo-500/30 max-h-[85vh] flex flex-col shadow-2xl shadow-indigo-600/20"
                 style={{ zIndex: 10000 }}
               >
                 {/* Modal Header */}
                 <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-xl font-semibold text-white">
+                  <h3 className="text-xl font-semibold text-transparent bg-clip-text bg-gradient-to-r from-indigo-300 to-purple-300">
                     Select Token
                   </h3>
                   <button
@@ -348,7 +353,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search by name or symbol"
-                    className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-cyan-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500/30"
+                    className="w-full pl-10 pr-4 py-3 bg-gray-800/50 border border-indigo-500/30 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500/30"
                   />
                 </div>
 
@@ -398,7 +403,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                 <button
                   onClick={fetchTokens}
                   disabled={isLoading}
-                  className="mt-4 w-full flex items-center justify-center py-2 px-4 bg-cyan-600/20 text-cyan-400 rounded-xl hover:bg-cyan-600/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="mt-4 w-full flex items-center justify-center py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
                   {isLoading ? "Loading..." : "Refresh Tokens"}
                 </button>

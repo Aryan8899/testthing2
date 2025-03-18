@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useWallet } from "@suiet/wallet-kit"; 
+import { useWallet } from "@suiet/wallet-kit";
 
 import { Transaction } from "@mysten/sui/transactions";
 import toast, { StyledToastContainer } from "../utils/CustomToast";
@@ -76,16 +76,16 @@ export default function RemoveLiquidityPage() {
   const { account, connected } = useWallet();
 
   //const suiClient = useSuiClient();
-  const { signAndExecuteTransactionBlock } = useWallet();
-
+  const { signAndExecuteTransaction } = useWallet();
 
   // Get pair information
-  const { pairExists, currentPairId, reserves, checkPairExistence,loadingPair: isPairLoading } = usePair(
-    token0,
-    token1
-  );
-
-  
+  const {
+    pairExists,
+    currentPairId,
+    reserves,
+    checkPairExistence,
+    loadingPair: isPairLoading,
+  } = usePair(token0, token1);
 
   // Token change handlers
   const handleToken0Change = useCallback((newToken: Token | null) => {
@@ -124,7 +124,7 @@ export default function RemoveLiquidityPage() {
   useEffect(() => {
     fetchBalances();
   }, [token0, token1]);
-  
+
   // Fetch transaction history
   useEffect(() => {
     if (!currentPairId) return;
@@ -316,85 +316,85 @@ export default function RemoveLiquidityPage() {
       toast.error("Please select a pair with LP tokens");
       return;
     }
-  
+
     setIsLoading(true);
     const toastId = toast.loading("Processing transaction...");
-  
+
     try {
       // Filter for LP tokens from our program
       const latestProgramLP = lpBalances.filter((coin) =>
         coin.type.includes(CONSTANTS.PACKAGE_ID)
       );
-  
+
       if (latestProgramLP.length === 0) {
         throw new Error("No LP tokens found for this program");
       }
-  
+
       // Sort coins by balance (largest first)
       const sortedCoins = [...latestProgramLP].sort((a, b) => {
         return Number(BigInt(b.balance || "0") - BigInt(a.balance || "0"));
       });
-  
+
       // Calculate total available LP
       const totalAvailableLp = latestProgramLP.reduce(
         (sum, coin) => sum + BigInt(coin.balance || "0"),
         0n
       );
-  
+
       // Calculate target LP burn amount
       let targetAmount: bigint =
         selectedPercentage === 100
           ? totalAvailableLp
           : (totalAvailableLp * BigInt(selectedPercentage)) / 100n;
-  
+
       if (targetAmount === 0n || targetAmount > totalAvailableLp) {
         toast.error("Invalid amount to remove");
         return;
       }
-  
+
       const tx = new Transaction();
       const biggestCoin = sortedCoins[0];
       const biggestCoinBalance = BigInt(biggestCoin.balance || "0");
-  
+
       console.log("Initial LP Details:", {
         totalAvailable: totalAvailableLp.toString(),
         targetAmount: targetAmount.toString(),
         selectedPercentage,
         biggestCoinBalance: biggestCoinBalance.toString(),
       });
-  
+
       let coinToUse;
       let burnAmount;
-  
+
       // Handle single LP token or merge multiple
       if (biggestCoinBalance >= targetAmount) {
         console.log("Using single coin strategy");
         const primaryCoinObject = tx.object(biggestCoin.id);
-  
+
         coinToUse =
           selectedPercentage === 100
             ? primaryCoinObject
             : tx.splitCoins(primaryCoinObject, [
                 tx.pure.u64(targetAmount.toString()),
               ]);
-  
+
         burnAmount = targetAmount;
       } else {
         console.log("Using merge strategy");
         let remainingTarget = targetAmount;
         const coinsNeeded = [];
-  
+
         for (const coin of sortedCoins) {
           if (remainingTarget <= 0n) break;
           const coinBalance = BigInt(coin.balance || "0");
           coinsNeeded.push(coin.id);
           remainingTarget -= coinBalance;
         }
-  
+
         if (remainingTarget > 0n) {
           throw new Error("Not enough LP tokens to reach target amount");
         }
-  
+
         const primaryCoin = tx.object(coinsNeeded[0]);
         if (coinsNeeded.length > 1) {
           const otherCoins = coinsNeeded.slice(1).map((id) => tx.object(id));
@@ -403,42 +403,42 @@ export default function RemoveLiquidityPage() {
         coinToUse = primaryCoin;
         burnAmount = targetAmount;
       }
-  
+
       const vectorArg = tx.makeMoveVec({
         elements: [coinToUse],
       });
-  
+
       if (!currentPairId) {
         throw new Error("No valid liquidity pair found.");
       }
-  
+
       // Get LP token types first - we'll use this to get the correct order
       const response = await suiClient.getObject({
         id: biggestCoin.id,
         options: { showType: true },
       });
-  
+
       if (!response?.data?.type) {
         throw new Error("Failed to retrieve LP token type.");
       }
-  
+
       const lpTokenTypes = response.data.type.match(/LPCoin<(.+),\s*(.+)>/);
       if (!lpTokenTypes) {
         throw new Error("Invalid LP token format.");
       }
-  
+
       let [, type0, type1] = lpTokenTypes;
       type0 = getBaseType(type0.trim());
       type1 = getBaseType(type1.trim().replace(">", ""));
-  
+
       // Set min amounts to zero to prevent ERR_INSUFFICIENT_B_AMOUNT (303)
       const minAmount0 = "0";
       const minAmount1 = "0";
-  
+
       // Set deadline in milliseconds
       const currentTimestamp = Date.now();
       const deadline = currentTimestamp + 10 * 60 * 1000; // 10 minutes
-  
+
       console.log("Transaction params:", {
         currentTimestampMs: currentTimestamp,
         deadlineMs: deadline,
@@ -448,7 +448,7 @@ export default function RemoveLiquidityPage() {
         type0,
         type1,
       });
-  
+
       tx.moveCall({
         target: `${CONSTANTS.PACKAGE_ID}::${CONSTANTS.MODULES.ROUTER}::remove_liquidity`,
         typeArguments: [type0, type1],
@@ -463,37 +463,28 @@ export default function RemoveLiquidityPage() {
           tx.pure.u64(deadline),
         ],
       });
-  
+
       // Execute transaction with a single wallet approval
-      const result = await signAndExecuteTransactionBlock({
-        transactionBlock: tx as any,
-        requestType: "WaitForLocalExecution",
-        options: {
-          showEffects: true,
-        },
+      const result = await signAndExecuteTransaction({
+        transaction: tx as any,
       });
-  
+
       console.log("Transaction result:", result);
-      
-      // Check for errors in the result
-      if (result.effects?.status?.error) {
-        throw new Error(`Transaction failed: ${result.effects.status.error}`);
-      }
-  
+
       toast.update(toastId, {
         render: "LP removed successfully!",
         type: "success",
         isLoading: false,
         autoClose: 5000,
       });
-  
+
       // Refresh LP balances
       await findLPTokens();
     } catch (error: any) {
       console.error("Handler Error:", error);
       toast.update(toastId, {
         render: error.message,
-        type: "error", 
+        type: "error",
         isLoading: false,
         autoClose: 5000,
       });
@@ -501,7 +492,6 @@ export default function RemoveLiquidityPage() {
       setIsLoading(false);
     }
   };
-  
 
   // Animation variants
   const containerVariants = {
@@ -527,7 +517,7 @@ export default function RemoveLiquidityPage() {
   return (
     <>
       <StyledToastContainer />
-      <div className="min-h-screen w-full flex flex-col items-center py-8">
+      <div className="min-h-screen w-full flex flex-col items-center py-8 justify-center">
         <motion.div
           className="w-[95%] max-w-xl mb-8"
           initial="hidden"
@@ -561,7 +551,7 @@ export default function RemoveLiquidityPage() {
                     onClick={() => setShowSettings(!showSettings)}
                     className="p-2 rounded-lg bg-indigo-800/30 hover:bg-indigo-700/40 transition-colors duration-200"
                   >
-                    <Settings className="w-5 h-5 text-indigo-300" />
+                    <Settings className="w-5 h-5 text-indigo-300 cursor-pointer" />
                   </button>
                   <div className="text-sm bg-indigo-900/30 px-3 py-1.5 rounded-full border border-indigo-500/30">
                     <span className="text-gray-300">Slippage: </span>
@@ -607,21 +597,24 @@ export default function RemoveLiquidityPage() {
                               : "bg-yellow-500/20 text-yellow-500"
                           }`}
                         >
-  {isPairLoading ? "⏳" : pairExists ? "✓" : "⚠"}
+                          {isPairLoading ? "⏳" : pairExists ? "✓" : "⚠"}
                         </span>
                         <div>
-                        {isPairLoading ? (
-            <p className="text-sm font-medium text-green-400">Checking LP Pair...</p>
-        ) : (
-            <p className="text-sm font-medium">
-                {pairExists ? "LP Tokens Found" : "No LP Tokens"}
-            </p>
-        )}
-        {currentPairId && !isPairLoading && (
-            <p className="text-xs text-gray-500">
-                ID: {currentPairId?.slice(0, 8)}...{currentPairId?.slice(-6)}
-            </p>
-        )}
+                          {isPairLoading ? (
+                            <p className="text-sm font-medium text-green-400">
+                              Checking LP Pair...
+                            </p>
+                          ) : (
+                            <p className="text-sm font-medium">
+                              {pairExists ? "LP Tokens Found" : "No LP Tokens"}
+                            </p>
+                          )}
+                          {currentPairId && !isPairLoading && (
+                            <p className="text-xs text-gray-500">
+                              ID: {currentPairId?.slice(0, 8)}...
+                              {currentPairId?.slice(-6)}
+                            </p>
+                          )}
                         </div>
                       </div>
                       {pairExists && (
@@ -680,7 +673,7 @@ export default function RemoveLiquidityPage() {
                 <div className="flex flex-col">
                   {/* First Token */}
                   <div className="flex-1 min-h-[120px] flex flex-col justify-between">
-                    <label className="text-sm font-medium text-gray-400 flex items-center gap-1.5">
+                    <label className="text-sm font-medium text-gray-400 flex items-center gap-1.5 mb-2">
                       <span>First Token</span>
                     </label>
                     <div className="py-2">
@@ -692,23 +685,26 @@ export default function RemoveLiquidityPage() {
                         onAmountChange={() => {}}
                         balance={balance0}
                         showInput={false}
+                        isInput={false}
+                        disableInput={true} // Explicitly disable input functionality
+                        centerButton={true} // Center the token selector button
                       />
                     </div>
                   </div>
 
                   {/* Swap Button */}
-                  <div className="flex items-center justify-center">
+                  <div className="flex items-center justify-center my-2">
                     <button
                       onClick={handleSwapTokens}
                       className="p-3 rounded-full border border-indigo-500/30 bg-indigo-800/30 hover:bg-indigo-700/40 transition-all duration-200 transform hover:scale-110 shadow-lg shadow-indigo-500/20"
                     >
-                      <ArrowDownUp className="w-5 h-5 text-indigo-300" />
+                      <ArrowDownUp className="w-5 h-5 text-indigo-300 cursor-pointer" />
                     </button>
                   </div>
 
                   {/* Second Token */}
                   <div className="flex-1 min-h-[120px] flex flex-col justify-between">
-                    <label className="text-sm font-medium text-gray-400 flex items-center">
+                    <label className="text-sm font-medium text-gray-400 flex items-center mb-2">
                       <span>Second Token</span>
                     </label>
                     <div className="py-2">
@@ -720,6 +716,9 @@ export default function RemoveLiquidityPage() {
                         onAmountChange={() => {}}
                         balance={balance1}
                         showInput={false}
+                        isInput={false}
+                        disableInput={true} // Explicitly disable input functionality
+                        centerButton={true} // Center the token selector button
                       />
                     </div>
                   </div>
@@ -1046,7 +1045,7 @@ export default function RemoveLiquidityPage() {
                                 <div className="flex items-center">
                                   <Link className="w-4 h-4 text-cyan-400 mr-2" />
                                   <a
-                                    href={`https://suiscan.xyz/object/${entry.lpCoinId}`}
+                                    href={`https://suiscan.xyz/devnet/object/${entry.lpCoinId}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-cyan-400 hover:underline"
@@ -1063,7 +1062,7 @@ export default function RemoveLiquidityPage() {
                                 <div className="flex items-center">
                                   <Link className="w-4 h-4 text-cyan-400 mr-2" />
                                   <a
-                                    href={`https://suiscan.xyz/transaction/${entry.transactionHash}`}
+                                    href={`https://suiscan.xyz/devnet/transaction/${entry.transactionHash}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="text-cyan-400 hover:underline"
@@ -1100,7 +1099,7 @@ export default function RemoveLiquidityPage() {
                                     <div className="flex items-center">
                                       <Wallet className="w-4 h-4 text-cyan-400 mr-2" />
                                       <a
-                                        href={`https://suiscan.xyz/address/${entry.sender}`}
+                                        href={`https://suiscan.xyz/devnet/address/${entry.sender}`}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         className="text-cyan-400 hover:underline"
