@@ -1,4 +1,4 @@
-// tokenUtils.ts - Updated with resource-aware methods
+// tokenUtils.ts - Updated with resource-aware methods and image handling
 import { advancedSuiClient } from "./advancedSuiClient";
 
 // Shared interfaces
@@ -44,6 +44,64 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 const coinMetadataCache = new Map<string, any>();
 const coinTypeCache = new Map<string, string>();
+
+// Define a list of known tokens for use across the application
+const tokenList: Token[] = [
+  // This is a placeholder - you should replace this with your actual token list
+  // Example token format:
+  {
+    id: "0x2::sui::SUI",
+    name: "Sui",
+    symbol: "SUI",
+    decimals: 9,
+    coinType: "0x2::sui::SUI",
+    metadata: {
+      name: "Sui",
+      symbol: "SUI",
+      decimals: 9,
+      image: DEFAULT_TOKEN_IMAGE,
+    },
+  },
+  // Add more tokens as needed
+];
+
+/**
+ * Get all available tokens in the system
+ * @returns Array of Token objects
+ */
+export function getAllTokens(): Token[] {
+  return tokenList;
+}
+
+/**
+ * Normalizes a token object to ensure it has all required properties
+ * particularly focusing on the image URL in metadata
+ */
+export function normalizeToken(token: Token): Token {
+  if (!token) return token;
+
+  // Create a proper metadata object if it doesn't exist
+  const metadata = token.metadata || {
+    name: token.name || "",
+    symbol: token.symbol || "",
+    decimals: token.decimals || 9,
+    image: DEFAULT_TOKEN_IMAGE,
+  };
+
+  // Ensure the image property exists
+  if (!metadata.image) {
+    metadata.image = DEFAULT_TOKEN_IMAGE;
+  }
+
+  // Return a new token object with all properties properly set
+  return {
+    ...token,
+    name: token.name || metadata.name || "",
+    symbol: token.symbol || metadata.symbol || "",
+    decimals: token.decimals || metadata.decimals || 9,
+    metadata,
+  };
+}
 
 /**
  * Fetch all coins of a specific type owned by an address
@@ -229,18 +287,18 @@ export function sortTokenTypes(type0: string, type1: string): [string, string] {
 
   const bytes0 = new TextEncoder().encode(type0);
   const bytes1 = new TextEncoder().encode(type1);
+  return compareBytes(bytes0, bytes1) ? [type0, type1] : [type1, type0];
+}
 
-  // Compare byte arrays lexicographically
-  const minLen = Math.min(bytes0.length, bytes1.length);
+const compareBytes = (a: any, b: any) => {
+  const minLen = Math.min(a.length, b.length);
   for (let i = 0; i < minLen; i++) {
-    if (bytes0[i] !== bytes1[i]) {
-      return bytes0[i] < bytes1[i] ? [type0, type1] : [type1, type0];
+    if (a[i] !== b[i]) {
+      return a[i] < b[i];
     }
   }
-
-  // If all compared bytes are equal, shorter array comes first
-  return bytes0.length < bytes1.length ? [type0, type1] : [type1, type0];
-}
+  return a.length < b.length;
+};
 
 /**
  * Find optimal coins to use for a transaction
@@ -303,4 +361,20 @@ export const cleanTokenName = (name: string): string => {
 export function clearTokenCaches() {
   coinMetadataCache.clear();
   coinTypeCache.clear();
+}
+
+/**
+ * Find a token by its id
+ * @param tokenId The id of the token to find
+ * @returns The token or null if not found
+ */
+export function findTokenById(tokenId: string): Token | null {
+  if (!tokenId) return null;
+
+  const foundToken = tokenList.find(
+    (token) => token.id && token.id.toLowerCase() === tokenId.toLowerCase()
+  );
+
+  // If found, ensure it has proper image
+  return foundToken ? normalizeToken(foundToken) : null;
 }

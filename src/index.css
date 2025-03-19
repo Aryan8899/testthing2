@@ -160,7 +160,9 @@ button[data-testid="connect-button"] {
 /* ===== TOAST NOTIFICATIONS ===== */
 /* Toast container styling */
 .toast-container {
-    z-index: 9999;
+    z-index: 9999 !important;
+    margin-top: 10px !important;
+    /* Add margin to clear fixed headers */
 }
 
 /* Toast animations */
@@ -177,6 +179,7 @@ button[data-testid="connect-button"] {
         transform: translateX(1000px);
         opacity: 0;
     }
+
     100% {
         transform: translateX(0);
         opacity: 1;
@@ -188,6 +191,7 @@ button[data-testid="connect-button"] {
         transform: translateX(0);
         opacity: 1;
     }
+
     100% {
         transform: translateX(1000px);
         opacity: 0;
@@ -214,6 +218,11 @@ button[data-testid="connect-button"] {
 .Toastify__progress-bar {
     height: 3px !important;
     background: linear-gradient(to right, rgb(99, 102, 241), rgb(6, 182, 212)) !important;
+}
+
+/* Make sure toasts appear on top of everything */
+.Toastify__toast-container {
+    z-index: 9999 !important;
 }
 
 /* Toast type variations */

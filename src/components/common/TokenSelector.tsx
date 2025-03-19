@@ -5,10 +5,14 @@ import SimpleBar from "simplebar-react";
 import { createPortal } from "react-dom";
 import { toast } from "react-toastify";
 import "simplebar/dist/simplebar.min.css";
-import { Search, X, Wallet, AlertCircle } from "lucide-react";
+import { Search, X, Wallet, AlertCircle, RefreshCcw } from "lucide-react";
 import { useTokens } from "../../hooks/useTokens";
-import { Token, TokenInfo, DEFAULT_TOKEN_IMAGE } from "../../utils/tokenUtils";
-import { usePair } from "../../hooks/usePair";
+import {
+  Token,
+  TokenInfo,
+  DEFAULT_TOKEN_IMAGE,
+  normalizeToken,
+} from "../../utils/tokenUtils";
 
 interface TokenSelectorProps {
   onSelect: (token: Token | null) => void;
@@ -20,8 +24,9 @@ interface TokenSelectorProps {
   balance?: string;
   isInput?: boolean;
   selectedToken1?: Token | null;
-  centerButton?: boolean; // New prop to center the selector button
-  disableInput?: boolean; // New prop to explicitly disable input functionality
+  centerButton?: boolean; // Center the selector button
+  disableInput?: boolean; // Explicitly disable input functionality
+  isLoading?: boolean; // New prop to show loading state
 }
 
 // Token skeleton for loading state (memoized)
@@ -84,15 +89,18 @@ const TokenListItem = memo(
         transition={{ delay: index * 0.03 }}
         className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-indigo-900/30 transition-colors"
         onClick={() => {
-          onSelect({
-            id: token.id,
-            name: token.metadata?.name || "",
-            symbol: token.metadata?.symbol || "",
-            decimals: token.metadata?.decimals || 0,
-            metadata: token.metadata,
-            coinType: token.coinType,
-            allObjectIds: token.allObjectIds,
-          });
+          // Normalize token before passing to ensure image is set
+          onSelect(
+            normalizeToken({
+              id: token.id,
+              name: token.metadata?.name || "",
+              symbol: token.metadata?.symbol || "",
+              decimals: token.metadata?.decimals || 0,
+              metadata: token.metadata,
+              coinType: token.coinType,
+              allObjectIds: token.allObjectIds,
+            })
+          );
         }}
       >
         <div className="flex items-center gap-3">
@@ -142,6 +150,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   isInput = true,
   centerButton = false,
   disableInput = false,
+  isLoading = false, // Default to false
 }) => {
   // State management
   const [isOpen, setIsOpen] = useState(false);
@@ -152,7 +161,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   const {
     tokens,
     filteredTokens,
-    isLoading,
+    isLoading: isTokensLoading,
     searchQuery,
     setSearchQuery,
     fetchTokens,
@@ -161,6 +170,11 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   // Determine if we should show input fields
   // If disableInput is true, we never show input regardless of other props
   const shouldShowInput = !disableInput && showInput && selectedToken;
+
+  // Ensure the selectedToken has a properly formatted metadata with image
+  const normalizedSelectedToken = selectedToken
+    ? normalizeToken(selectedToken)
+    : null;
 
   // Handle click outside modal
   useEffect(() => {
@@ -181,12 +195,14 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
 
   // Open modal handler
   const handleOpenModal = useCallback(() => {
+    if (isLoading) return; // Don't open modal if we're loading
+
     if (!account?.address) {
       toast.error("Please connect your wallet to select a token");
       return;
     }
     setIsOpen(true);
-  }, [account?.address]);
+  }, [account?.address, isLoading]);
 
   // Handle amount input change
   const handleAmountChange = useCallback(
@@ -202,7 +218,8 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
   // Handle token selection
   const handleTokenSelect = useCallback(
     (token: Token) => {
-      onSelect(token);
+      // Normalize token before passing up to ensure consistent structure
+      onSelect(normalizeToken(token));
       setIsOpen(false);
     },
     [onSelect]
@@ -229,10 +246,17 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
     <div className="rounded-2xl px-5 py-4 border border-indigo-700/30 bg-gray-800/40 backdrop-blur-sm hover:border-indigo-500/50 transition-all duration-300 hover:shadow-lg hover:shadow-indigo-500/10">
       <div className="flex items-center justify-between mb-2">
         <span className="text-sm text-gray-400">{label}</span>
-        {selectedToken && (
+        {normalizedSelectedToken && (
           <span className="text-sm text-gray-400 flex items-center">
             <Wallet className="w-3.5 h-3.5 text-indigo-400 mr-1" />
-            Balance: {balance}
+            {isLoading ? (
+              <span className="flex items-center">
+                <RefreshCcw className="w-3 h-3 animate-spin mr-1 text-indigo-400" />
+                Loading...
+              </span>
+            ) : (
+              <>Balance: {balance}</>
+            )}
           </span>
         )}
       </div>
@@ -251,18 +275,25 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                 type="text"
                 value={amount}
                 onChange={(e) => handleAmountChange(e.target.value)}
-                className="bg-transparent border-none text-lg sm:text-xl w-full p-1 sm:p-2 focus:outline-none text-white transition-all duration-200 focus:ring-0 pr-16"
+                className={`bg-transparent border-none text-lg sm:text-xl w-full p-1 sm:p-2 focus:outline-none text-white transition-all duration-200 focus:ring-0 pr-16 ${
+                  isLoading ? "opacity-60" : ""
+                }`}
                 placeholder="0.0"
-                readOnly={!isInput || disableInput}
+                readOnly={!isInput || disableInput || isLoading}
+                disabled={isLoading}
               />
-              {isInput && !disableInput && parseFloat(balance) > 0 && (
-                <button
-                  onClick={() => onAmountChange(balance)}
-                  className="absolute right-1 sm:right-2 top-1/2 transform -translate-y-1/2 text-2xs sm:text-xs bg-indigo-800/50 hover:bg-indigo-700/60 text-indigo-300 px-1 sm:px-2 py-0.5 sm:py-1 rounded-md sm:rounded-lg transition-colors whitespace-nowrap min-w-12"
-                >
-                  MAX
-                </button>
-              )}
+              {isInput &&
+                !disableInput &&
+                parseFloat(balance) > 0 &&
+                !isLoading && (
+                  <button
+                    onClick={() => onAmountChange(balance)}
+                    className="absolute right-1 sm:right-2 top-1/2 transform -translate-y-1/2 text-2xs sm:text-xs bg-indigo-800/50 hover:bg-indigo-700/60 text-indigo-300 px-1 sm:px-2 py-0.5 sm:py-1 rounded-md sm:rounded-lg transition-colors whitespace-nowrap min-w-12"
+                    disabled={isLoading}
+                  >
+                    MAX
+                  </button>
+                )}
             </div>
           </div>
         )}
@@ -270,44 +301,63 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
         <button
           onClick={handleOpenModal}
           className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all duration-300 hover:bg-indigo-700/30 active:scale-95 ${
-            selectedToken
+            normalizedSelectedToken
               ? "bg-gray-800/50 border-gray-700/50"
               : "bg-indigo-600/20 border-indigo-500/30 text-indigo-400"
-          } border`}
+          } border ${isLoading ? "opacity-70 cursor-wait" : ""}`}
+          disabled={isLoading}
         >
-          {selectedToken ? (
+          {normalizedSelectedToken ? (
             <>
               <div className="flex items-center gap-2">
                 <img
-                  src={selectedToken.metadata?.image || DEFAULT_TOKEN_IMAGE}
-                  alt={selectedToken.symbol}
+                  src={
+                    normalizedSelectedToken.metadata?.image ||
+                    DEFAULT_TOKEN_IMAGE
+                  }
+                  alt={normalizedSelectedToken.symbol}
                   className="w-8 h-8 rounded-full"
+                  onError={(e) => {
+                    // If image fails to load, set src to default image
+                    (e.target as HTMLImageElement).src = DEFAULT_TOKEN_IMAGE;
+                  }}
                 />
                 <div className="flex flex-col items-start">
                   <span className="font-medium text-white">
-                    {selectedToken.symbol}
+                    {normalizedSelectedToken.symbol}
                   </span>
                   <span className="text-xs text-gray-400">
                     {/* Simplified for cleaner UI */}
                   </span>
                 </div>
               </div>
-              <svg
-                className="w-4 h-4 text-gray-400 ml-1"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
+              {isLoading ? (
+                <RefreshCcw className="w-4 h-4 animate-spin ml-1 text-indigo-400" />
+              ) : (
+                <svg
+                  className="w-4 h-4 text-gray-400 ml-1"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              )}
             </>
           ) : (
-            <span className="font-semibold cursor-pointer">Select Token</span>
+            <>
+              <span className="font-semibold cursor-pointer">
+                {isLoading ? "Loading..." : "Select Token"}
+              </span>
+              {isLoading && (
+                <RefreshCcw className="w-4 h-4 animate-spin ml-1 text-indigo-400" />
+              )}
+            </>
           )}
         </button>
       </div>
@@ -363,7 +413,7 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                   style={{ maxHeight: "400px" }}
                 >
                   <div className="space-y-1">
-                    {isLoading ? (
+                    {isTokensLoading ? (
                       <>
                         <TokenSkeleton />
                         <TokenSkeleton />
@@ -402,10 +452,17 @@ const TokenSelector: React.FC<TokenSelectorProps> = ({
                 {/* Refresh Button */}
                 <button
                   onClick={fetchTokens}
-                  disabled={isLoading}
+                  disabled={isTokensLoading}
                   className="mt-4 w-full flex items-center justify-center py-3 px-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl hover:from-indigo-700 hover:to-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
                 >
-                  {isLoading ? "Loading..." : "Refresh Tokens"}
+                  {isTokensLoading ? (
+                    <span className="flex items-center">
+                      <RefreshCcw className="w-4 h-4 animate-spin mr-2" />
+                      Loading...
+                    </span>
+                  ) : (
+                    "Refresh Tokens"
+                  )}
                 </button>
               </motion.div>
             </motion.div>

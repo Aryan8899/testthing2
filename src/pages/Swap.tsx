@@ -1,8 +1,15 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  useMemo,
+} from "react";
 import { useWallet } from "@suiet/wallet-kit";
 import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import {
   Settings,
   Zap,
@@ -13,6 +20,7 @@ import {
   Link,
   ExternalLink,
   ArrowRightLeft,
+  PlusCircle,
 } from "lucide-react";
 import toast, { StyledToastContainer } from "../utils/CustomToast";
 
@@ -38,6 +46,8 @@ import {
   estimateGasBudget,
   validateRoute,
   simulateTransaction,
+  handleSwapError,
+  interpretMoveError,
 } from "../utils/transactionUtils-multihop";
 import {
   scaleAmount,
@@ -67,6 +77,9 @@ interface SwapHistoryItem {
  * Supports both direct and multi-hop swaps
  */
 const EnhancedSwapPage = () => {
+  // React Router navigation
+  const navigate = useNavigate();
+
   // State management
   const [token0, setToken0] = useState<Token | null>(null);
   const [token1, setToken1] = useState<Token | null>(null);
@@ -130,6 +143,44 @@ const EnhancedSwapPage = () => {
     currentPairId,
     reserves
   );
+
+  // Handle redirect to Add Liquidity page
+  const handleAddLiquidityRedirect = useCallback(() => {
+    // Create query parameters if needed
+    const params = new URLSearchParams();
+
+    if (token0 && token0.id) {
+      console.log(`Adding token0 parameter: ${token0.id}`);
+      params.append("token0", token0.id);
+    }
+
+    if (token1 && token1.id) {
+      console.log(`Adding token1 parameter: ${token1.id}`);
+      params.append("token1", token1.id);
+    }
+
+    const queryString = params.toString();
+    const targetUrl = `/addliquidity${queryString ? `?${queryString}` : ""}`;
+
+    console.log(`Redirecting to: ${targetUrl}`);
+    navigate(targetUrl);
+  }, [navigate, token0, token1]);
+
+  // Check if both tokens are selected and no routes are available
+  const shouldShowAddLiquidity = useMemo(() => {
+    return (
+      token0 !== null &&
+      token1 !== null &&
+      // Show when no routes exist regardless of amount
+      ((!isLoadingRoutes && routes.length === 0 && !pairExists) ||
+        // Or when an amount is entered but no routes
+        (amount0 &&
+          parseFloat(amount0) > 0 &&
+          !isLoadingRoutes &&
+          routes.length === 0 &&
+          !pairExists))
+    );
+  }, [token0, token1, amount0, isLoadingRoutes, routes.length, pairExists]);
 
   // Update mount status on unmount
   useEffect(() => {
@@ -310,7 +361,7 @@ const EnhancedSwapPage = () => {
     []
   );
 
-  // Handle swap transaction with comprehensive error handling
+  // Improved handleSwap function with better error handling and debugging
   const handleSwap = async () => {
     if (!account?.address) {
       toast.error("Please connect your wallet");
@@ -346,11 +397,22 @@ const EnhancedSwapPage = () => {
       return;
     }
 
-    setIsSwapLoading(true);
+    // setIsLoading(true);
     setNetworkError(null);
     const toastId = toast.loading("Preparing swap transaction...");
 
     try {
+      // Log the swap attempt details for debugging
+      console.log("selectedRoute", selectedRoute);
+      console.log("Starting swap with route:", {
+        routeType: selectedRoute.type,
+        inputToken: token0.symbol,
+        outputToken: token1.symbol,
+        amount: amount0,
+        pairId: selectedRoute.pairs[0].pairId,
+        reserves: selectedRoute.pairs[0].reserves,
+      });
+
       // Calculate effective slippage (add small buffer for multi-hop swaps)
       const effectiveSlippage =
         selectedRoute.type === "multi"
@@ -399,6 +461,9 @@ const EnhancedSwapPage = () => {
       addToTransactionHistory(pendingTx);
 
       // Create transaction using the selected route
+      console.log("Creating swap transaction...");
+      console.log("token0::::::::::", token0);
+      console.log("token1::::::::::", token1);
       const swapTx = await createSwapTransactionWithRoute(
         suiClient,
         account,
@@ -419,15 +484,29 @@ const EnhancedSwapPage = () => {
 
       setProcessingStep("Simulating transaction...");
 
-      // Simulate transaction first
+      // Simulate transaction first with enhanced error reporting
+      console.log("Simulating transaction before execution...");
       const simulation = await simulateTransaction(suiClient, account, swapTx);
 
+      // Log detailed simulation results for debugging
+      console.log("Transaction simulation result:", simulation);
+
       if (!simulation.success) {
+        console.error(
+          "Simulation failed:",
+          simulation.error,
+          simulation.details
+        );
         throw new Error(simulation.error || "Simulation failed");
       }
 
-      // Estimate gas budget for transaction
-      const gasBudget = estimateGasBudget(selectedRoute);
+      // Estimate gas budget for transaction with a buffer for safety
+      const estimatedGas = estimateGasBudget(selectedRoute);
+      const gasBudget = Math.floor(estimatedGas * 1.2); // Add 20% buffer
+
+      // Set gas budget explicitly
+      console.log(`Setting gas budget to ${gasBudget}`);
+      swapTx.setGasBudget(gasBudget);
 
       // Update toast
       toast.update(toastId, {
@@ -445,7 +524,8 @@ const EnhancedSwapPage = () => {
           : `Executing ${selectedRoute.hops}-hop swap...`
       );
 
-      // Execute the transaction with gas budget
+      // Execute the transaction with additional options
+      console.log("Executing transaction via wallet...");
       const result = await signAndExecuteTransactionBlock({
         transactionBlock: swapTx as any,
         options: {
@@ -457,6 +537,20 @@ const EnhancedSwapPage = () => {
         },
       });
 
+      console.log("Transaction response:", result);
+
+      // Check for errors in transaction effects
+      if (result.effects?.status?.error) {
+        console.error(
+          "Transaction execution error:",
+          result.effects.status.error
+        );
+        throw new Error(
+          interpretMoveError(result.effects.status.error) ||
+            "Transaction failed during execution"
+        );
+      }
+
       // Wait for transaction finality
       toast.update(toastId, {
         render: "Waiting for confirmation...",
@@ -464,6 +558,7 @@ const EnhancedSwapPage = () => {
         isLoading: true,
       });
 
+      console.log("Waiting for transaction finality...");
       await waitForTransactionFinality(result.digest);
 
       // Update toast with success message
@@ -506,8 +601,21 @@ const EnhancedSwapPage = () => {
       await checkPairExistence();
       debouncedFindRoutes();
     } catch (error: any) {
-      console.error("Swap error:", error);
-      let errorMessage = error.message || "Unknown error";
+      console.error("Swap error details:", {
+        error,
+        message: error.message,
+        stack: error.stack,
+        code: error.code,
+        name: error.name,
+      });
+
+      // Capture the original error message
+      const originalErrorMessage = error.message || "Unknown error";
+      console.error(`Original error message: "${originalErrorMessage}"`);
+
+      // Use the enhanced error handler
+      const userMessage = handleSwapError(error);
+      console.log(`User-friendly error message: "${userMessage}"`);
 
       // Update history with failed transaction
       setTransactionHistory((prev: any) => {
@@ -525,8 +633,8 @@ const EnhancedSwapPage = () => {
 
       // Check if it's a network resource error
       if (
-        errorMessage.includes("INSUFFICIENT_RESOURCES") ||
-        errorMessage.includes("Failed to fetch")
+        originalErrorMessage.includes("INSUFFICIENT_RESOURCES") ||
+        originalErrorMessage.includes("Failed to fetch")
       ) {
         setNetworkError("Network resource limitations detected");
 
@@ -534,26 +642,9 @@ const EnhancedSwapPage = () => {
         if (!hasRetried) {
           setHasRetried(true);
         }
-
-        errorMessage = "Network congestion detected. Please try again.";
       }
 
-      // Provide user-friendly error messages
-      let userMessage = "Swap failed";
-
-      if (errorMessage.includes("Insufficient balance")) {
-        userMessage = "Insufficient balance for swap";
-      } else if (errorMessage.includes("slippage")) {
-        userMessage = "Price moved too much, try increasing slippage tolerance";
-      } else if (errorMessage.includes("gas budget")) {
-        userMessage =
-          "Transaction exceeds gas budget. Try a direct swap instead.";
-      } else if (networkError) {
-        userMessage = "Network congestion detected. Please try again.";
-      } else {
-        userMessage = `Swap failed: ${errorMessage}`;
-      }
-
+      // Show detailed error information in toast
       toast.update(toastId, {
         render: userMessage,
         type: "error",
@@ -562,7 +653,7 @@ const EnhancedSwapPage = () => {
       });
     } finally {
       if (isMounted.current) {
-        setIsSwapLoading(false);
+        // setIsLoading(false);
         setProcessingStep("");
       }
     }
@@ -622,6 +713,28 @@ const EnhancedSwapPage = () => {
 
   // Should we show the Routes panel?
   const showRoutesPanel = routes.length >= 1 || isLoadingRoutes;
+
+  // Animation for Add Liquidity button
+  const addLiquidityVariants = {
+    hidden: { opacity: 0, y: 10 },
+    visible: {
+      opacity: 1,
+      y: 0,
+      transition: {
+        type: "spring",
+        stiffness: 500,
+        damping: 30,
+        delay: 0.1,
+      },
+    },
+    exit: {
+      opacity: 0,
+      y: 10,
+      transition: {
+        duration: 0.2,
+      },
+    },
+  };
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center py-10">
@@ -892,6 +1005,36 @@ const EnhancedSwapPage = () => {
                   isLoadingRoutes={isLoadingRoutes}
                   refreshRoutes={debouncedFindRoutes}
                 />
+              )}
+            </AnimatePresence>
+
+            {/* Add Liquidity Button - Shown when both tokens are selected but no route exists */}
+            <AnimatePresence>
+              {shouldShowAddLiquidity && (
+                <motion.div
+                  variants={addLiquidityVariants}
+                  initial="hidden"
+                  animate="visible"
+                  exit="exit"
+                  className="mt-4 p-4 rounded-xl bg-gradient-to-r from-indigo-900/30 to-purple-900/30 border border-indigo-500/30"
+                >
+                  <div className="text-center mb-3">
+                    <h4 className="text-lg font-semibold text-indigo-200">
+                      No Liquidity Found
+                    </h4>
+                    <p className="text-sm text-gray-400 mt-1">
+                      There's no existing liquidity pool for this token pair.
+                      Create the first pool to enable swaps!
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddLiquidityRedirect}
+                    className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white rounded-xl transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98]"
+                  >
+                    <PlusCircle className="w-5 h-5" />
+                    <span>Add Liquidity</span>
+                  </button>
+                </motion.div>
               )}
             </AnimatePresence>
 

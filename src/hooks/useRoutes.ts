@@ -333,15 +333,21 @@ export function useRoutes(
 
       // Step 1: Check direct route if pair exists
       if (pairExists && currentPairId) {
-        console.log("Checking direct route");
+        console.log("Checking direct route:::::::");
         const isToken0In = matchTokenTypes(
           reserves.token0,
           token0.coinType || ""
         );
+        console.log("isToken0In", isToken0In);
 
-        const reserveIn = isToken0In ? reserves.reserve0 : reserves.reserve1;
-        const reserveOut = isToken0In ? reserves.reserve1 : reserves.reserve0;
+        console.log("token0", token0);
+        console.log("token1", token1);
 
+        const reserveIn = isToken0In ? reserves.reserve1 : reserves.reserve0;
+        const reserveOut = isToken0In ? reserves.reserve0 : reserves.reserve1;
+
+        console.log("reserveIn", reserveIn);
+        console.log("reserveOut", reserveOut);
         const scaledAmountIn = scaleAmount(effectiveAmount, token0.decimals);
         const rawOutput = calculateAmountOut(
           scaledAmountIn.toString(),

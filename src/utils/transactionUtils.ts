@@ -24,42 +24,66 @@ export async function createSwapTransaction(
     token1.coinType as string
   );
 
-  // Determine if we need to swap the tokens based on sorting
   const needToSwap = sortedType0 !== token0.coinType;
-
-  // Choose the appropriate swap function based on token order
   const swapFunction = needToSwap
     ? "swap_exact_tokens1_for_tokens0"
     : "swap_exact_tokens0_for_tokens1";
 
-  // Calculate amounts with proper decimal handling
+  // Calculate scaled amounts
   const scaledAmountIn = BigInt(
-    Math.floor(parseFloat(amount0) * Math.pow(10, token0.decimals))
+    Math.floor(parseFloat(amount0) * 10 ** token0.decimals)
   );
   const scaledMinAmountOut = BigInt(
-    Math.floor(parseFloat(minAmountOut) * Math.pow(10, token1.decimals))
+    Math.floor(parseFloat(minAmountOut) * 10 ** token1.decimals)
   );
 
-  // Fetch coins for token0
+  // Fetch coins efficiently
   const coins = await suiClient.getCoins({
     owner: account.address,
     coinType: token0.coinType,
   });
-
-  // Find a coin with sufficient balance
-  const coinToUse = coins.data.find(
+  let coinToUse = coins.data.find(
     (coin: any) => BigInt(coin.balance) >= scaledAmountIn
   );
 
   if (!coinToUse) {
-    throw new Error("Insufficient balance");
+    // Merge coins if needed
+    const totalBalance = coins.data.reduce(
+      (acc: bigint, coin: any) => acc + BigInt(coin.balance),
+      BigInt(0)
+    );
+    if (totalBalance < scaledAmountIn) throw new Error("Insufficient balance");
+
+    // Merge all coins before selecting
+    await suiClient.mergeCoins(
+      account.address,
+      coins.data.map((coin: any) => coin.coinObjectId)
+    );
+    coinToUse = coins.data[0]; // Re-fetch the coins if necessary
   }
+
+  console.log({
+    token0,
+    token1,
+    suiClient,
+    amount0,
+    minAmountOut,
+    deadline,
+    needToSwap,
+    swapFunction,
+    sortedType0,
+    sortedType1,
+    scaledAmountIn,
+    scaledMinAmountOut,
+    coins,
+    coinToUse,
+  });
 
   // Set up transaction
   const swapTx = new Transaction();
   const isSUI = token0.coinType === "0x2::sui::SUI";
 
-  // Split coin differently for SUI vs other coins
+  // Split coins efficiently
   const [splitCoin] = isSUI
     ? swapTx.splitCoins(swapTx.gas, [
         swapTx.pure.u64(scaledAmountIn.toString()),
@@ -68,10 +92,10 @@ export async function createSwapTransaction(
         swapTx.pure.u64(scaledAmountIn.toString()),
       ]);
 
-  // Add the swap call
+  // Execute swap
   swapTx.moveCall({
     target: `${CONSTANTS.PACKAGE_ID}::router::${swapFunction}`,
-    typeArguments: [sortedType0, sortedType1], // Use sorted types in correct order
+    typeArguments: [sortedType0, sortedType1],
     arguments: [
       swapTx.object(CONSTANTS.ROUTER_ID),
       swapTx.object(CONSTANTS.FACTORY_ID),
@@ -240,6 +264,7 @@ export async function simulateTransaction(
       transactionBlock: transaction,
       sender: account.address,
     });
+    console.log("simulationResult", simulationResult);
 
     if (simulationResult.effects?.status?.error) {
       return {

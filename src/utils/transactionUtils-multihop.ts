@@ -14,6 +14,8 @@ import {
   findOptimalCoins,
 } from "./routeUtils";
 
+import { createSwapTransaction } from "./transactionUtils";
+
 /**
  * Create a transaction for multi-hop token swapping
  * This handles both direct and multi-hop swaps appropriately
@@ -28,9 +30,9 @@ export async function createSwapTransactionWithRoute(
   selectedRoute: RouteInfo,
   deadline: number
 ): Promise<Transaction> {
-  // Handle direct swap vs multi-hop
+
   if (selectedRoute.type === "direct") {
-    return createDirectSwapTransaction(
+    return createSwapTransaction(
       suiClient,
       account,
       token0,
@@ -56,6 +58,7 @@ export async function createSwapTransactionWithRoute(
 
 /**
  * Create a transaction for direct token swapping (single hop)
+ * With improved error handling, debugging and robust token matching
  */
 async function createDirectSwapTransaction(
   suiClient: any,
@@ -69,60 +72,191 @@ async function createDirectSwapTransaction(
 ): Promise<Transaction> {
   console.log("Creating direct swap transaction");
 
-  // Sort token types to ensure consistent ordering
-  const [sortedType0, sortedType1] = sortTokenTypes(
-    token0.coinType as string,
-    token1.coinType as string
-  );
-
-  // Determine if we need to swap the tokens based on sorting
-  const needToSwap = sortedType0 !== token0.coinType;
-
-  // Choose the appropriate swap function based on token order
-  const swapFunction = needToSwap
-    ? "swap_exact_tokens1_for_tokens0"
-    : "swap_exact_tokens0_for_tokens1";
-
-  // Calculate amounts with proper decimal handling
-  const scaledAmountIn = scaleAmount(amount0, token0.decimals);
-  const scaledMinAmountOut = scaleAmount(minAmountOut, token1.decimals);
-
-  console.log("Swap parameters:", {
-    function: swapFunction,
-    typeArg0: sortedType0,
-    typeArg1: sortedType1,
-    amountIn: scaledAmountIn.toString(),
-    minOut: scaledMinAmountOut.toString(),
-    deadline,
-  });
-
-  // Create transaction with proper error handling
-  const swapTx = new Transaction();
-
   try {
-    // Fetch coins for token0
-    const coins = await suiClient.getCoins({
-      owner: account.address,
-      coinType: token0.coinType,
+    // STEP 1: Fetch pair object with more detailed error handling
+    console.log(`Fetching pair details for pair ID: ${pairId}`);
+    let pairObj;
+    try {
+      pairObj = await suiClient.getObject({
+        id: pairId,
+        options: { showContent: true, showType: true, showDisplay: true },
+      });
+      console.log("Raw pair object:", JSON.stringify(pairObj, null, 2));
+    } catch (error: any) {
+      console.error("Failed to fetch pair data:", error);
+      throw new Error(`Failed to fetch pair details: ${error.message}`);
+    }
+
+    if (!pairObj.data?.content?.fields) {
+      console.error("Invalid pair structure:", pairObj);
+      throw new Error("Pair object has invalid structure");
+    }
+
+    // STEP 2: Extract token types with better field detection
+    const pairFields = pairObj.data.content.fields;
+
+    // Log the full structure of pairFields to debug
+    console.log("Pair fields:", pairFields);
+
+    // Check various possible field names for token types
+    let pairToken0 = "";
+    let pairToken1 = "";
+
+    // Try different field naming patterns
+    // if (pairFields.token0_type) {
+    //   pairToken0 = pairFields.token0_type;
+    //   pairToken1 = pairFields.token1_type;
+    // } else if (pairFields.token_0_type) {
+    //   pairToken0 = pairFields.token_0_type;
+    //   pairToken1 = pairFields.token_1_type;
+    // } else if (pairFields.type_0) {
+    //   pairToken0 = pairFields.type_0;
+    //   pairToken1 = pairFields.type_1;
+    // } else
+    {
+      // Try to find the token type fields by inspecting all fields
+      Object.entries(pairFields).forEach(([key, value]) => {
+        if (
+          typeof value === "string" &&
+          value.includes("::") &&
+          key.toLowerCase().includes("token") &&
+          key.includes("0")
+        ) {
+          pairToken0 = value.toString();
+        }
+        if (
+          typeof value === "string" &&
+          value.includes("::") &&
+          key.toLowerCase().includes("token") &&
+          key.includes("1")
+        ) {
+          pairToken1 = value.toString();
+        }
+      });
+    }
+
+    if (!pairToken0 || !pairToken1) {
+      console.error(
+        "Could not find token type fields in pair object:",
+        pairFields
+      );
+      throw new Error("Failed to extract token types from pair");
+    }
+
+    console.log("Pair token types identified:", {
+      pairToken0,
+      pairToken1,
+      userToken0: token0.coinType,
+      userToken1: token1.coinType,
     });
 
-    // Find optimal coins to use (handling UTXO model)
+    // STEP 3: Determine token positions with more robust matching
+    // Normalize all token types for consistent comparison
+    const normalizedPairToken0 = normalizeTokenType(pairToken0);
+    const normalizedPairToken1 = normalizeTokenType(pairToken1);
+    const normalizedUserToken0 = normalizeTokenType(token0.coinType as string);
+    const normalizedUserToken1 = normalizeTokenType(token1.coinType as string);
+
+    console.log("Normalized token types:", {
+      normalizedPairToken0,
+      normalizedPairToken1,
+      normalizedUserToken0,
+      normalizedUserToken1,
+    });
+
+    // Check multiple matching patterns to be robust
+    const isInputToken0 = matchTokenTypes(
+      normalizedPairToken0,
+      normalizedUserToken0
+    );
+
+    console.log("Token matching result:", {
+      isInputToken0,
+      matchDetails: {
+        pairToken0_vs_userToken0: matchTokenTypes(
+          normalizedPairToken0,
+          normalizedUserToken0
+        ),
+        pairToken1_vs_userToken0: matchTokenTypes(
+          normalizedPairToken1,
+          normalizedUserToken0
+        ),
+        pairToken0_vs_userToken1: matchTokenTypes(
+          normalizedPairToken0,
+          normalizedUserToken1
+        ),
+        pairToken1_vs_userToken1: matchTokenTypes(
+          normalizedPairToken1,
+          normalizedUserToken1
+        ),
+      },
+    });
+
+    // STEP 4: Select swap function with verification
+    const swapFunction = isInputToken0
+      ? "swap_exact_tokens0_for_tokens1"
+      : "swap_exact_tokens1_for_tokens0";
+
+    console.log(`Selected swap function: ${swapFunction}`);
+
+    // STEP 5: Calculate amounts with proper decimal handling
+    const scaledAmountIn = scaleAmount(amount0, token0.decimals);
+    const scaledMinAmountOut = scaleAmount(minAmountOut, token1.decimals);
+
+    console.log("Swap parameters:", {
+      function: swapFunction,
+      typeArg0: pairToken0,
+      typeArg1: pairToken1,
+      amountIn: scaledAmountIn.toString(),
+      minOut: scaledMinAmountOut.toString(),
+      deadline,
+    });
+
+    // STEP 6: Create transaction
+    const swapTx = new Transaction();
+
+    // STEP 7: Fetch coins with better error handling
+    console.log(
+      `Fetching ${token0.symbol} coins for address: ${account.address}`
+    );
+    let coins;
+    try {
+      coins = await suiClient.getCoins({
+        owner: account.address,
+        coinType: token0.coinType,
+      });
+      console.log(`Found ${coins.data.length} coins of type ${token0.symbol}`);
+    } catch (error: any) {
+      console.error("Failed to fetch coins:", error);
+      throw new Error(`Failed to fetch coins: ${error.message}`);
+    }
+
+    // Find optimal coins with validation
     const coinsToUse = findOptimalCoins(coins.data, scaledAmountIn.toString());
 
     if (!coinsToUse || coinsToUse.length === 0) {
-      throw new Error("Insufficient balance");
+      console.error("No suitable coins found for the swap amount");
+      throw new Error(`Insufficient balance of ${token0.symbol} for this swap`);
     }
 
-    // Prepare input coin(s)
+    console.log(`Using ${coinsToUse.length} coins for the swap`);
+
+    // STEP 8: Prepare input coin(s) with better handling
     let inputCoin;
 
     if (coinsToUse.length === 1) {
       // Single coin case
       const coinToUse = coinsToUse[0];
       const isSUI = token0.coinType === "0x2::sui::SUI";
+      const coinBalance = BigInt(coinToUse.balance);
 
-      if (BigInt(coinToUse.balance) > scaledAmountIn) {
+      console.log(`Using single coin with balance: ${coinBalance.toString()}`);
+
+      if (coinBalance > scaledAmountIn) {
         // Need to split the coin when balance > needed amount
+        console.log(
+          `Splitting coin - need ${scaledAmountIn.toString()} from ${coinBalance.toString()}`
+        );
         const coinObj = isSUI
           ? swapTx.gas
           : swapTx.object(coinToUse.coinObjectId);
@@ -132,16 +266,19 @@ async function createDirectSwapTransaction(
         ]);
       } else {
         // Use whole coin when balance = needed amount
+        console.log(`Using entire coin with exact balance needed`);
         inputCoin = isSUI ? swapTx.gas : swapTx.object(coinToUse.coinObjectId);
       }
     } else {
       // Multiple coins case (need to merge first)
+      console.log(`Using multiple coins (${coinsToUse.length})`);
       const primaryCoin = swapTx.object(coinsToUse[0].coinObjectId);
       const otherCoins = coinsToUse
         .slice(1)
         .map((coin) => swapTx.object(coin.coinObjectId));
 
       // Merge coins first
+      console.log(`Merging ${otherCoins.length} coins into primary coin`);
       swapTx.mergeCoins(primaryCoin, otherCoins);
 
       // Now split if needed
@@ -150,36 +287,72 @@ async function createDirectSwapTransaction(
         BigInt(0)
       );
 
+      console.log(`Total balance after merge: ${totalBalance.toString()}`);
+
       if (totalBalance > scaledAmountIn) {
+        console.log(
+          `Splitting merged coin - need ${scaledAmountIn.toString()} from ${totalBalance.toString()}`
+        );
         [inputCoin] = swapTx.splitCoins(primaryCoin, [
           swapTx.pure.u64(scaledAmountIn.toString()),
         ]);
       } else {
+        console.log(
+          `Using entire merged coin with balance: ${totalBalance.toString()}`
+        );
         inputCoin = primaryCoin;
       }
     }
 
-    // Add the swap call
-    swapTx.moveCall({
-      target: `${CONSTANTS.PACKAGE_ID}::router::${swapFunction}`,
-      typeArguments: [sortedType0, sortedType1], // Use sorted types in correct order
-      arguments: [
-        swapTx.object(CONSTANTS.ROUTER_ID),
-        swapTx.object(CONSTANTS.FACTORY_ID),
-        swapTx.object(pairId),
-        inputCoin,
-        swapTx.pure.u256(scaledMinAmountOut.toString()),
-        swapTx.pure.u64(deadline),
-      ],
+    // STEP 9: Verify constants before making the move call
+    console.log("Verifying constants for Move call:", {
+      PACKAGE_ID: CONSTANTS.PACKAGE_ID,
+      ROUTER_ID: CONSTANTS.ROUTER_ID,
+      FACTORY_ID: CONSTANTS.FACTORY_ID,
     });
 
+    if (
+      !CONSTANTS.PACKAGE_ID ||
+      !CONSTANTS.ROUTER_ID ||
+      !CONSTANTS.FACTORY_ID
+    ) {
+      throw new Error("Missing required constants for swap");
+    }
+
+    // STEP 10: Add the swap call with extra validation
+    console.log("Creating Move call with transaction arguments");
+    try {
+      swapTx.moveCall({
+        target: `${CONSTANTS.PACKAGE_ID}::router::${swapFunction}`,
+        typeArguments: [pairToken0, pairToken1], // Use pair's original token ordering
+        arguments: [
+          swapTx.object(CONSTANTS.ROUTER_ID),
+          swapTx.object(CONSTANTS.FACTORY_ID),
+          swapTx.object(pairId),
+          inputCoin,
+          swapTx.pure.u256(scaledMinAmountOut.toString()),
+          swapTx.pure.u64(deadline),
+        ],
+      });
+    } catch (error: any) {
+      console.error("Failed to create Move call:", error);
+      throw new Error(`Failed to create swap transaction: ${error.message}`);
+    }
+
+    console.log("Direct swap transaction created successfully");
     return swapTx;
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error creating direct swap transaction:", error);
-    throw error;
+    // Rethrow with more specific error message
+    if (error.message) {
+      throw error; // Preserve original error with details
+    } else {
+      throw new Error(
+        "Failed to create direct swap transaction due to an unknown error"
+      );
+    }
   }
 }
-
 /**
  * Create a transaction for multi-hop token swapping
  */
@@ -435,13 +608,65 @@ export function validateRoute(route: RouteInfo): boolean {
 }
 
 /**
- * Simulate a transaction to check for potential errors
+ * Helper function to interpret Move error codes
+ * Maps error codes to user-friendly messages
+ */
+export function interpretMoveError(error: string): string {
+  // Parse MoveAbort errors
+  const moveAbortMatch = error.match(/MoveAbort\(.*?, (\d+)\)/);
+  if (moveAbortMatch) {
+    const errorCode = parseInt(moveAbortMatch[1]);
+
+    // Map known error codes to messages
+    switch (errorCode) {
+      case 305:
+        return "Insufficient liquidity or imbalanced reserves";
+      case 306:
+        return "Slippage too high, try increasing slippage tolerance";
+      case 307:
+        return "Pool reserves update failed";
+      case 308:
+        return "Pair already exists";
+      case 309:
+        return "Insufficient output amount, try increasing slippage";
+      case 310:
+        return "Excessive input amount";
+      case 311:
+        return "Transaction deadline expired";
+      case 1:
+        return "Insufficient balance for swap";
+      case 2:
+        return "Router not authorized";
+      default:
+        return `Transaction failed with code ${errorCode}, try again with higher slippage`;
+    }
+  }
+
+  // Handle other error types
+  if (error.includes("insufficient gas")) {
+    return "Transaction needs more gas, try a direct swap";
+  }
+
+  if (error.includes("balance")) {
+    return "Insufficient balance for swap";
+  }
+
+  if (error.includes("slippage")) {
+    return "Price moved too much, try increasing slippage tolerance";
+  }
+
+  // Default message for unknown errors
+  return "Swap failed, please try again";
+}
+
+/**
+ * Extended simulation function with detailed error reporting
  */
 export async function simulateTransaction(
   suiClient: any,
   account: { address: string },
   transaction: Transaction
-): Promise<{ success: boolean; error: string | null }> {
+): Promise<{ success: boolean; error: string | null; details?: any }> {
   try {
     const simulation = await suiClient.devInspectTransactionBlock({
       transactionBlock: transaction,
@@ -452,18 +677,63 @@ export async function simulateTransaction(
     if (simulation.effects?.status?.error) {
       return {
         success: false,
-        error: simulation.effects.status.error,
+        error: interpretMoveError(simulation.effects.status.error),
+        details: simulation.effects.status.error,
       };
     }
 
     return {
       success: true,
       error: null,
+      details: simulation,
     };
   } catch (error: any) {
     return {
       success: false,
-      error: error.message || "Unknown error during simulation",
+      error:
+        interpretMoveError(error.message) || "Unknown error during simulation",
+      details: error,
     };
   }
+}
+
+/**
+ * Updated function to handle Wallet adapter errors
+ */
+export function handleSwapError(error: any): string {
+  console.error("Detailed swap error:", error);
+
+  let errorMessage = error.message || "Unknown error";
+
+  // Check if it's a MoveAbort error
+  if (typeof errorMessage === "string" && errorMessage.includes("MoveAbort")) {
+    return interpretMoveError(errorMessage);
+  }
+
+  // Handle wallet adapter errors
+  if (error.code) {
+    switch (error.code) {
+      case 4001:
+        return "Transaction rejected by user";
+      case 4100:
+        return "Wallet disconnected or unauthorized";
+      case 4200:
+        return "Wallet request failed, please try again";
+      case 4900:
+        return "Network connection issue, please check your connection";
+      default:
+        return `Wallet error (${error.code}): ${error.message}`;
+    }
+  }
+
+  // Handle network errors
+  if (
+    errorMessage.includes("INSUFFICIENT_RESOURCES") ||
+    errorMessage.includes("Failed to fetch")
+  ) {
+    return "Network congestion detected. Please try again.";
+  }
+
+  // Default to a user-friendly version of the original error
+  return "Swap failed: " + errorMessage;
 }

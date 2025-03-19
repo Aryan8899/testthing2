@@ -1,4 +1,3 @@
-// CustomToast.tsx
 import React from "react";
 import {
   ToastContainer,
@@ -85,9 +84,9 @@ export const StyledToastContainer = () => {
           <X className="w-4 h-4 text-gray-400" />
         </button>
       )}
-      // Fix TypeScript errors by using valid props
       toastClassName={() => "rounded-xl p-4 min-h-0 min-w-[300px] shadow-xl"}
-      className="toast-container"
+      className="toast-container !top-[80px]" // Add top margin to clear the header
+      style={{ zIndex: 9999 }} // Ensure high z-index
     />
   );
 };

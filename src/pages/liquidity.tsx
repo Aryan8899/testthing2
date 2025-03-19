@@ -3,6 +3,7 @@
 "use client";
 import React from "react";
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useLocation, useSearchParams } from "react-router-dom";
 import { useWallet } from "@suiet/wallet-kit";
 
 import { motion, AnimatePresence } from "framer-motion";
@@ -19,7 +20,7 @@ import toast, { StyledToastContainer } from "../utils/CustomToast";
 // Import shared components
 import TokenSelector from "../components/common/TokenSelector";
 import InfoCard from "../components/common/InfoCard";
-import NetworkStatusBar from "../components/NetworkStatus"; // Import the network status component
+import NetworkStatusBar from "../components/NetworkStatus";
 
 // Import shared hooks
 import { usePair } from "../hooks/usePair";
@@ -30,7 +31,15 @@ import { useTokenBalances } from "../hooks/useTokenBalance";
 import { advancedSuiClient } from "../utils/advancedSuiClient";
 
 // Import shared utilities
-import { Token } from "../utils/tokenUtils";
+import {
+  Token,
+  getAllTokens,
+  findTokenById,
+  getCoinType,
+  getCoinMetadata,
+  DEFAULT_TOKEN_IMAGE,
+  normalizeToken,
+} from "../utils/tokenUtils";
 import { formatLargeNumber } from "../utils/formatUtils";
 import { LPEvent, getTokenTypeName } from "../utils/pairUtils";
 import {
@@ -40,12 +49,17 @@ import {
 } from "../utils/transactionUtils";
 
 const LiquidityPage = () => {
+  // Get search params from URL
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+
   // State management
   const [token0, setToken0] = useState<Token | null>(null);
   const [token1, setToken1] = useState<Token | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [hasRetried, setHasRetried] = useState(false);
+  const [loadingTokens, setLoadingTokens] = useState(false);
 
   // New state to control when events are re-rendered
   const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
@@ -98,6 +112,219 @@ const LiquidityPage = () => {
     };
   }, []);
 
+  const fetchTokenData = useCallback(
+    async (tokenId: string): Promise<Token | null> => {
+      if (!tokenId) return null;
+
+      try {
+        console.log(`Fetching data for token: ${tokenId}`);
+
+        // First try to find the token in our list
+        const token = findTokenById(tokenId);
+        if (token) {
+          console.log(`Token ${tokenId} found in local list`);
+          return normalizeToken(token);
+        }
+
+        // If not found, fetch from chain
+        console.log(`Token ${tokenId} not in list, fetching from chain`);
+        setLoadingTokens(true);
+
+        // Get the object data
+        const objectData = await advancedSuiClient.getObject({
+          id: tokenId,
+          options: { showType: true, showContent: true, showDisplay: true },
+        });
+
+        if (!objectData || !objectData.data) {
+          console.error(`Failed to fetch token data for ${tokenId}`);
+          return null;
+        }
+
+        // Extract information from the object
+        const objectType = objectData.data.type || "";
+        const display = objectData.data.display?.data || {};
+
+        // Try to get coin type
+        const coinType = await getCoinType(tokenId);
+
+        // Try to get metadata if we have a coin type
+        let metadata = null;
+        if (coinType) {
+          metadata = await getCoinMetadata(coinType);
+        }
+
+        // Make sure we have an image URL - check multiple sources
+        const imageUrl =
+          metadata?.image ||
+          metadata?.iconUrl ||
+          display.image_url ||
+          display.image ||
+          display.icon_url ||
+          DEFAULT_TOKEN_IMAGE;
+
+        // Construct a token object with guaranteed image
+        const constructedToken: Token = {
+          id: tokenId,
+          name:
+            metadata?.name ||
+            display.name ||
+            objectType.split("::").pop() ||
+            "Unknown Token",
+          symbol:
+            metadata?.symbol ||
+            display.symbol ||
+            objectType.split("::").pop() ||
+            "UNKNOWN",
+          decimals: metadata?.decimals || 9,
+          coinType: coinType || objectType,
+          metadata: {
+            name: metadata?.name || display.name || "Unknown Token",
+            symbol: metadata?.symbol || display.symbol || "UNKNOWN",
+            decimals: metadata?.decimals || 9,
+            image: imageUrl, // Ensure image is always set
+          },
+        };
+
+        console.log(`Constructed token from chain:`, constructedToken);
+        return normalizeToken(constructedToken);
+      } catch (error) {
+        console.error(`Error fetching token data:`, error);
+        return null;
+      } finally {
+        if (isMounted.current) {
+          setLoadingTokens(false);
+        }
+      }
+    },
+    []
+  );
+
+  // Replace the URL parameter handling function as well
+  // Inside the useEffect that handles URL parameters, update this part:
+
+  useEffect(() => {
+    const handleUrlTokenParams = async () => {
+      const token0Id = searchParams.get("token0");
+      const token1Id = searchParams.get("token1");
+
+      if (!token0Id && !token1Id) return;
+
+      console.log("URL parameters received:", { token0Id, token1Id });
+
+      // Set loading state
+      setLoadingTokens(true);
+
+      try {
+        let token0Data = null;
+        let token1Data = null;
+
+        // Process token0 if provided
+        if (token0Id) {
+          token0Data = await fetchTokenData(token0Id);
+          if (token0Data) {
+            console.log("Setting token0:", token0Data);
+            // Token is already normalized by fetchTokenData
+            setToken0(token0Data);
+          } else {
+            console.warn(`Could not find or fetch token0: ${token0Id}`);
+          }
+        }
+
+        // Process token1 if provided
+        if (token1Id) {
+          token1Data = await fetchTokenData(token1Id);
+          if (token1Data) {
+            console.log("Setting token1:", token1Data);
+            // Token is already normalized by fetchTokenData
+            setToken1(token1Data);
+          } else {
+            console.warn(`Could not find or fetch token1: ${token1Id}`);
+          }
+        }
+
+        // If both tokens were successfully set, check pair existence
+        // Use a timeout to ensure state updates have completed
+        if (token0Data && token1Data) {
+          console.log("Both tokens set from URL, checking pair existence");
+          setTimeout(() => {
+            if (isMounted.current) {
+              checkPairExistence();
+            }
+          }, 500);
+        }
+      } catch (error) {
+        console.error("Error handling URL parameters:", error);
+      } finally {
+        if (isMounted.current) {
+          setLoadingTokens(false);
+        }
+      }
+    };
+
+    // Execute the handler when the component mounts or URL changes
+    handleUrlTokenParams();
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]); // Only depend on searchParams to prevent loops
+
+  // Update token selection handlers to use normalizeToken:
+
+  const handleToken0Change = useCallback(
+    (newToken: Token | null) => {
+      if (!newToken || newToken.id === token0?.id) return;
+
+      setToken0(normalizeToken(newToken));
+      resetAmounts();
+
+      // Only proceed when both tokens are selected
+      if (token1) {
+        checkPairExistence();
+      }
+    },
+    [token0, token1, resetAmounts, checkPairExistence]
+  );
+
+  const handleToken1Change = useCallback(
+    (newToken: Token | null) => {
+      if (!newToken || newToken.id === token1?.id) return;
+
+      setToken1(normalizeToken(newToken));
+      resetAmounts();
+
+      // Only proceed when both tokens are selected
+      if (token0) {
+        checkPairExistence();
+      }
+    },
+    [token0, token1, resetAmounts, checkPairExistence]
+  );
+
+  // Ensures tokens are properly loaded by retrying the existence check
+  const ensureTokensLoaded = useCallback(() => {
+    if (token0 && token1 && !pairExists && !isRefreshingPair) {
+      console.log("Ensuring tokens are loaded and pair is checked...");
+      // Small delay to ensure state is updated
+      setTimeout(() => {
+        if (isMounted.current) {
+          checkPairExistence();
+        }
+      }, 300);
+    }
+  }, [token0, token1, pairExists, isRefreshingPair, checkPairExistence]);
+
+  // Add effect to periodically check if tokens are loaded
+  useEffect(() => {
+    if (loadingTokens || !token0 || !token1) return;
+
+    // One-time check after loading is complete
+    const timer = setTimeout(() => {
+      ensureTokensLoaded();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [loadingTokens, token0, token1, ensureTokensLoaded]);
+
   // Handle network errors from balance fetching
   useEffect(() => {
     if (balanceError) {
@@ -113,37 +340,6 @@ const LiquidityPage = () => {
       setNetworkError(null);
     }
   }, [balanceError]);
-
-  // Token change handlers
-  const handleToken0Change = useCallback(
-    (newToken: Token | null) => {
-      if (!newToken || newToken.id === token0?.id) return;
-
-      setToken0(newToken);
-      resetAmounts();
-
-      // Only proceed when both tokens are selected
-      if (token1) {
-        checkPairExistence();
-      }
-    },
-    [token0, token1, resetAmounts, checkPairExistence]
-  );
-
-  const handleToken1Change = useCallback(
-    (newToken: Token | null) => {
-      if (!newToken || newToken.id === token1?.id) return;
-
-      setToken1(newToken);
-      resetAmounts();
-
-      // Only proceed when both tokens are selected
-      if (token0) {
-        checkPairExistence();
-      }
-    },
-    [token0, token1, resetAmounts, checkPairExistence]
-  );
 
   /**
    * Waits for transaction to be finalized on chain before proceeding
@@ -899,6 +1095,21 @@ const LiquidityPage = () => {
             </div>
 
             <div className="p-6">
+              {/* Token Loading Indicator */}
+              {loadingTokens && (
+                <motion.div
+                  variants={itemVariants}
+                  className="mt-3 mb-4 p-4 bg-indigo-900/20 rounded-xl border border-indigo-500/20"
+                >
+                  <div className="flex items-center gap-2">
+                    <RefreshCcw className="w-5 h-5 text-indigo-400 animate-spin" />
+                    <p className="text-sm text-indigo-300">
+                      Loading token information...
+                    </p>
+                  </div>
+                </motion.div>
+              )}
+
               {/* Pair Info Card */}
               <AnimatePresence>
                 {token0 && token1 && pairExists && (
@@ -932,6 +1143,7 @@ const LiquidityPage = () => {
                       balance={balance0}
                       isInput={true}
                       centerButton={true}
+                      isLoading={loadingTokens}
                     />
                   </div>
                 </motion.div>
@@ -951,6 +1163,7 @@ const LiquidityPage = () => {
                       balance={balance1}
                       isInput={true}
                       centerButton={true}
+                      isLoading={loadingTokens}
                     />
                   </div>
                 </motion.div>
@@ -1001,13 +1214,14 @@ const LiquidityPage = () => {
                     onClick={pairExists ? handleAddLiquidity : handleCreatePair}
                     disabled={
                       isLoading ||
+                      loadingTokens ||
                       !token0 ||
                       !token1 ||
                       (pairExists ? !amount0 || !amount1 : false)
                     }
                     className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:from-gray-700 disabled:to-gray-800 disabled:text-gray-500 text-white font-semibold py-4 px-6 rounded-xl transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] disabled:hover:scale-100 disabled:cursor-not-allowed shadow-lg hover:shadow-indigo-500/30 disabled:shadow-none"
                   >
-                    {isLoading ? (
+                    {isLoading || loadingTokens ? (
                       <div className="flex items-center justify-center">
                         <svg
                           className="animate-spin -ml-1 mr-3 h-5 w-5 text-white"
@@ -1029,7 +1243,9 @@ const LiquidityPage = () => {
                             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                           />
                         </svg>
-                        {pairExists
+                        {loadingTokens
+                          ? "Loading Tokens..."
+                          : pairExists
                           ? "Adding Liquidity..."
                           : "Creating Pair..."}
                       </div>

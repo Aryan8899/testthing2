@@ -514,7 +514,7 @@ const Header: React.FC = () => {
       <BackgroundEffects />
 
       {/* Main header */}
-      <header className="sticky top-0 z-[100]">
+      <header className="sticky top-0 z-[20]">
         {/* Animated border effect */}
         <motion.div
           initial={{ opacity: 0 }}
