@@ -54,7 +54,7 @@ const navItems = [
   },
   {
     label: "Earn",
-    path: "https://suitrumpnew.vercel.app/",
+    path: "https://newfarm-rho.vercel.app/",
     isExternal: true,
     icon: <Coins className="w-4 h-4" />,
   },
