@@ -21,6 +21,7 @@ import "simplebar/dist/simplebar.min.css";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { SuiClient } from "@mysten/sui.js/client";
+import { suidex } from "../assets"; // Import the SUIDEX logo
 
 // Type definitions
 interface TokenInfo {
@@ -54,7 +55,7 @@ const navItems = [
   },
   {
     label: "Earn",
-    path: "https://newfarm-rho.vercel.app/",
+    path: "https://suitrumpnew.vercel.app/",
     isExternal: true,
     icon: <Coins className="w-4 h-4" />,
   },
@@ -529,7 +530,7 @@ const Header: React.FC = () => {
             <div className="flex items-center justify-between h-16 lg:h-20">
               {/* Logo and Navigation - left side */}
               <div className="flex items-center gap-6 md:gap-8">
-                {/* Animated logo with enhanced glow */}
+                {/* Animated logo with enhanced glow - REPLACED WITH IMAGE */}
                 <motion.div
                   className="cursor-pointer"
                   onClick={() => navigate("/")}
@@ -551,14 +552,12 @@ const Header: React.FC = () => {
                       }}
                     />
 
-                    <h1 className="relative text-2xl font-extrabold tracking-tight">
-                      <span className="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-indigo-500 animate-gradient-x">
-                        Sui
-                      </span>
-                      <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 to-purple-500 animate-gradient-x">
-                        DeX
-                      </span>
-                    </h1>
+                    {/* SUIDEX logo image instead of text */}
+                    <img
+                      src={suidex}
+                      alt="SuiDeX Logo"
+                      className="relative h-8 w-auto"
+                    />
                   </div>
                 </motion.div>
 

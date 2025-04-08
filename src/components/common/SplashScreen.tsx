@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { suidex } from "../../assets"; // Import the SUIDEX logo
 
 const SplashScreen: React.FC = () => {
   const [progress, setProgress] = useState(0);
@@ -23,20 +24,23 @@ const SplashScreen: React.FC = () => {
       <div className="absolute bottom-1/4 right-1/4 w-1/3 h-1/3 bg-cyan-500/20 rounded-full blur-[80px] animate-pulse-slow" />
 
       <div className="relative z-10 flex flex-col items-center">
-        {/* Logo animation */}
+        {/* Logo animation with image instead of text */}
         <motion.div
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.5 }}
           className="mb-8"
         >
-          <div className="text-5xl font-bold relative">
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
-              Sui
-            </span>
-            <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-500 to-purple-500">
-              DeX
-            </span>
+          <div className="relative flex justify-center">
+            {/* SUIDEX logo image */}
+            <motion.img
+              src={suidex}
+              alt="SuiDeX Logo"
+              className="h-16 w-auto"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.8 }}
+            />
 
             {/* Animated rings around logo */}
             <motion.div

@@ -39,6 +39,9 @@ import {
   getCoinMetadata,
   DEFAULT_TOKEN_IMAGE,
   normalizeToken,
+  getTokenObjectId,
+  normalizeCoinType,
+  extractTokenTypesFromLP,
 } from "../utils/tokenUtils";
 import { formatLargeNumber } from "../utils/formatUtils";
 import { LPEvent, getTokenTypeName } from "../utils/pairUtils";
@@ -60,6 +63,7 @@ const LiquidityPage = () => {
   const [networkError, setNetworkError] = useState<string | null>(null);
   const [hasRetried, setHasRetried] = useState(false);
   const [loadingTokens, setLoadingTokens] = useState(false);
+  const [isUpdatingBackend, setIsUpdatingBackend] = useState(false);
 
   // New state to control when events are re-rendered
   const [renderedEvents, setRenderedEvents] = useState<LPEvent[]>([]);
@@ -112,84 +116,162 @@ const LiquidityPage = () => {
     };
   }, []);
 
+  // Enhanced fetchTokenData function
   const fetchTokenData = useCallback(
     async (tokenId: string): Promise<Token | null> => {
       if (!tokenId) return null;
 
       try {
-        console.log(`Fetching data for token: ${tokenId}`);
+        console.log(
+          `[LiquidityPage] Fetching data for token ID/type: ${tokenId}`
+        );
 
-        // First try to find the token in our list
+        // Check if it's a type string (contains ::)
+        const isTypeString = tokenId.includes("::");
+
+        // First try to find the token in our predefined list
         const token = findTokenById(tokenId);
         if (token) {
-          console.log(`Token ${tokenId} found in local list`);
+          console.log(`[LiquidityPage] Token ${tokenId} found in local list`);
           return normalizeToken(token);
         }
 
-        // If not found, fetch from chain
-        console.log(`Token ${tokenId} not in list, fetching from chain`);
         setLoadingTokens(true);
 
-        // Get the object data
-        const objectData = await advancedSuiClient.getObject({
-          id: tokenId,
-          options: { showType: true, showContent: true, showDisplay: true },
-        });
+        // If it's a type string, try to get an object ID for it
+        if (isTypeString && account?.address) {
+          console.log(`[LiquidityPage] Handling as coin type: ${tokenId}`);
 
-        if (!objectData || !objectData.data) {
-          console.error(`Failed to fetch token data for ${tokenId}`);
+          // Normalize coin type
+          const normalizedType = normalizeCoinType(tokenId);
+
+          try {
+            // Try to get metadata directly
+            const metadata = await getCoinMetadata(normalizedType);
+
+            // Try to get an object ID for this type
+            const objectId = await getTokenObjectId(
+              normalizedType,
+              advancedSuiClient,
+              account.address
+            );
+
+            if (metadata || objectId) {
+              const constructedToken: Token = {
+                id: objectId || tokenId, // Use object ID if found, otherwise fallback to type
+                name:
+                  metadata?.name ||
+                  normalizedType.split("::").pop() ||
+                  "Unknown",
+                symbol:
+                  metadata?.symbol ||
+                  normalizedType.split("::").pop() ||
+                  "UNKNOWN",
+                decimals: metadata?.decimals || 9,
+                coinType: normalizedType,
+                metadata: {
+                  name:
+                    metadata?.name ||
+                    normalizedType.split("::").pop() ||
+                    "Unknown",
+                  symbol:
+                    metadata?.symbol ||
+                    normalizedType.split("::").pop() ||
+                    "UNKNOWN",
+                  decimals: metadata?.decimals || 9,
+                  image: metadata?.image || DEFAULT_TOKEN_IMAGE,
+                },
+              };
+
+              console.log(
+                `[LiquidityPage] Successfully created token from type:`,
+                constructedToken
+              );
+              return normalizeToken(constructedToken);
+            }
+          } catch (error) {
+            console.warn(`[LiquidityPage] Error handling coin type: ${error}`);
+            // Continue to try as object ID
+          }
+        }
+
+        // Handle as object ID - get the object data
+        try {
+          console.log(`[LiquidityPage] Handling as object ID: ${tokenId}`);
+          const objectData = await advancedSuiClient.getObject({
+            id: tokenId,
+            options: { showType: true, showContent: true, showDisplay: true },
+          });
+
+          if (!objectData?.data) {
+            console.error(
+              `[LiquidityPage] Failed to fetch token data for ${tokenId}`
+            );
+            return null;
+          }
+
+          // Extract information from the object
+          const objectType = objectData.data.type || "";
+          const display = objectData.data.display?.data || {};
+
+          // Try to get coin type from the object
+          let coinType = null;
+          const typeMatch = objectType.match(/Coin<([^>]+)>/);
+          if (typeMatch) {
+            coinType = typeMatch[1];
+          } else {
+            coinType = await getCoinType(tokenId);
+          }
+
+          // Try to get metadata if we have a coin type
+          let metadata = null;
+          if (coinType) {
+            metadata = await getCoinMetadata(coinType);
+          }
+
+          // Make sure we have an image URL - check multiple sources
+          const imageUrl =
+            metadata?.image ||
+            metadata?.iconUrl ||
+            display.image_url ||
+            display.image ||
+            display.icon_url ||
+            DEFAULT_TOKEN_IMAGE;
+
+          // Construct a token object with guaranteed image
+          const constructedToken: Token = {
+            id: tokenId,
+            name:
+              metadata?.name ||
+              display.name ||
+              objectType.split("::").pop() ||
+              "Unknown Token",
+            symbol:
+              metadata?.symbol ||
+              display.symbol ||
+              objectType.split("::").pop() ||
+              "UNKNOWN",
+            decimals: metadata?.decimals || 9,
+            coinType: coinType || objectType,
+            metadata: {
+              name: metadata?.name || display.name || "Unknown Token",
+              symbol: metadata?.symbol || display.symbol || "UNKNOWN",
+              decimals: metadata?.decimals || 9,
+              image: imageUrl, // Ensure image is always set
+            },
+          };
+
+          console.log(
+            `[LiquidityPage] Constructed token from object:`,
+            constructedToken
+          );
+          return normalizeToken(constructedToken);
+        } catch (error) {
+          console.error(`[LiquidityPage] Error fetching object data:`, error);
           return null;
         }
-
-        // Extract information from the object
-        const objectType = objectData.data.type || "";
-        const display = objectData.data.display?.data || {};
-
-        // Try to get coin type
-        const coinType = await getCoinType(tokenId);
-
-        // Try to get metadata if we have a coin type
-        let metadata = null;
-        if (coinType) {
-          metadata = await getCoinMetadata(coinType);
-        }
-
-        // Make sure we have an image URL - check multiple sources
-        const imageUrl =
-          metadata?.image ||
-          metadata?.iconUrl ||
-          display.image_url ||
-          display.image ||
-          display.icon_url ||
-          DEFAULT_TOKEN_IMAGE;
-
-        // Construct a token object with guaranteed image
-        const constructedToken: Token = {
-          id: tokenId,
-          name:
-            metadata?.name ||
-            display.name ||
-            objectType.split("::").pop() ||
-            "Unknown Token",
-          symbol:
-            metadata?.symbol ||
-            display.symbol ||
-            objectType.split("::").pop() ||
-            "UNKNOWN",
-          decimals: metadata?.decimals || 9,
-          coinType: coinType || objectType,
-          metadata: {
-            name: metadata?.name || display.name || "Unknown Token",
-            symbol: metadata?.symbol || display.symbol || "UNKNOWN",
-            decimals: metadata?.decimals || 9,
-            image: imageUrl, // Ensure image is always set
-          },
-        };
-
-        console.log(`Constructed token from chain:`, constructedToken);
-        return normalizeToken(constructedToken);
       } catch (error) {
-        console.error(`Error fetching token data:`, error);
+        console.error(`[LiquidityPage] Error in fetchTokenData:`, error);
         return null;
       } finally {
         if (isMounted.current) {
@@ -197,12 +279,10 @@ const LiquidityPage = () => {
         }
       }
     },
-    []
+    [account?.address]
   );
 
-  // Replace the URL parameter handling function as well
-  // Inside the useEffect that handles URL parameters, update this part:
-
+  // Updated useEffect for handling URL parameters
   useEffect(() => {
     const handleUrlTokenParams = async () => {
       const token0Id = searchParams.get("token0");
@@ -210,7 +290,10 @@ const LiquidityPage = () => {
 
       if (!token0Id && !token1Id) return;
 
-      console.log("URL parameters received:", { token0Id, token1Id });
+      console.log("[LiquidityPage] URL parameters received:", {
+        token0Id,
+        token1Id,
+      });
 
       // Set loading state
       setLoadingTokens(true);
@@ -221,32 +304,37 @@ const LiquidityPage = () => {
 
         // Process token0 if provided
         if (token0Id) {
+          console.log(`[LiquidityPage] Fetching token0 data for: ${token0Id}`);
           token0Data = await fetchTokenData(token0Id);
           if (token0Data) {
-            console.log("Setting token0:", token0Data);
-            // Token is already normalized by fetchTokenData
+            console.log("[LiquidityPage] Setting token0:", token0Data);
             setToken0(token0Data);
           } else {
-            console.warn(`Could not find or fetch token0: ${token0Id}`);
+            console.warn(
+              `[LiquidityPage] Could not find or fetch token0: ${token0Id}`
+            );
           }
         }
 
         // Process token1 if provided
         if (token1Id) {
+          console.log(`[LiquidityPage] Fetching token1 data for: ${token1Id}`);
           token1Data = await fetchTokenData(token1Id);
           if (token1Data) {
-            console.log("Setting token1:", token1Data);
-            // Token is already normalized by fetchTokenData
+            console.log("[LiquidityPage] Setting token1:", token1Data);
             setToken1(token1Data);
           } else {
-            console.warn(`Could not find or fetch token1: ${token1Id}`);
+            console.warn(
+              `[LiquidityPage] Could not find or fetch token1: ${token1Id}`
+            );
           }
         }
 
         // If both tokens were successfully set, check pair existence
-        // Use a timeout to ensure state updates have completed
         if (token0Data && token1Data) {
-          console.log("Both tokens set from URL, checking pair existence");
+          console.log(
+            "[LiquidityPage] Both tokens set from URL, checking pair existence"
+          );
           setTimeout(() => {
             if (isMounted.current) {
               checkPairExistence();
@@ -254,7 +342,7 @@ const LiquidityPage = () => {
           }, 500);
         }
       } catch (error) {
-        console.error("Error handling URL parameters:", error);
+        console.error("[LiquidityPage] Error handling URL parameters:", error);
       } finally {
         if (isMounted.current) {
           setLoadingTokens(false);
@@ -266,7 +354,7 @@ const LiquidityPage = () => {
     handleUrlTokenParams();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]); // Only depend on searchParams to prevent loops
+  }, [searchParams]);
 
   // Update token selection handlers to use normalizeToken:
 
@@ -398,6 +486,161 @@ const LiquidityPage = () => {
   };
 
   /**
+   * New function to save liquidity event to backend
+   */
+  const saveEventToBackend = async (eventData: any, txDigest: string) => {
+    if (!account?.address || !token0 || !token1 || !currentPairId) {
+      console.warn("Missing required data for backend update");
+      return false;
+    }
+
+    setIsUpdatingBackend(true);
+
+    try {
+      // Get transaction details if not provided
+      let txDetails = eventData;
+
+      if (!txDetails) {
+        const txData = await advancedSuiClient.getTransactionBlock({
+          digest: txDigest,
+          options: {
+            showEvents: true,
+            showEffects: true,
+          },
+        });
+
+        // Extract relevant LP event from transaction
+        const lpEvent = txData.events?.find(
+          (event) =>
+            event.type.includes("::dex::LiquidityEvent") ||
+            event.type.includes("::liquidity::") ||
+            event.type.includes("::pool::")
+        );
+
+        if (!lpEvent) {
+          console.warn("No LP event found in transaction");
+          return false;
+        }
+
+        txDetails = lpEvent.parsedJson || {};
+      }
+
+      // Prepare data to send to backend
+      const eventToSave = {
+        sender: account.address,
+        lpCoinId: txDetails.lpCoinId || "",
+        pairId: currentPairId,
+        transactionHash: txDigest,
+        token0Type: { name: token0.coinType || token0.name },
+        token1Type: { name: token1.coinType || token1.name },
+        amount0: amount0 || txDetails.amount0 || "0",
+        amount1: amount1 || txDetails.amount1 || "0",
+        liquidity: txDetails.liquidity || "0",
+        totalSupply: txDetails.totalSupply || "0",
+        timestamp: new Date().toISOString(),
+        type: txDetails.type || "AddLiquidity",
+      };
+
+      // Call backend API
+      const response = await fetch(
+        "https://dexback-mu.vercel.app/api/lpcoin/save",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(eventToSave),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Backend responded with status: ${response.status}`);
+      }
+
+      console.log("Successfully saved liquidity event to backend");
+      return true;
+    } catch (error) {
+      console.error("Failed to save event to backend:", error);
+      return false;
+    } finally {
+      setIsUpdatingBackend(false);
+    }
+  };
+
+  /**
+   * Also save the position to backend
+   */
+  const savePositionToBackend = async (lpCoinId: string, txDigest: string) => {
+    if (!account?.address || !token0 || !token1 || !currentPairId) {
+      console.warn("Missing required data for position update");
+      return false;
+    }
+
+    try {
+      // Get LP coin details if possible
+      let lpDetails = {};
+      try {
+        const lpObject = await advancedSuiClient.getObject({
+          id: lpCoinId,
+          options: { showContent: true },
+        });
+
+        if (lpObject?.data?.content) {
+          lpDetails = lpObject.data.content;
+        }
+      } catch (err) {
+        console.warn("Could not fetch LP coin details:", err);
+      }
+
+      // Prepare position data
+      const positionData = {
+        id: lpCoinId,
+        pairId: currentPairId,
+        owner: account.address,
+        token0: {
+          name: token0.symbol || token0.name,
+          amount: amount0 || "0",
+          decimals: token0.decimals || 9,
+          coinType: token0.coinType || "",
+        },
+        token1: {
+          name: token1.symbol || token1.name,
+          amount: amount1 || "0",
+          decimals: token1.decimals || 9,
+          coinType: token1.coinType || "",
+        },
+        liquidity: lpDetails.balance || "0",
+        feeTier: "0.03%", // Default value, replace with actual if available
+        apr: "0%", // Default value, would be calculated
+        createdAt: new Date().toISOString(),
+        transactionHash: txDigest,
+      };
+
+      // Call backend API
+      const response = await fetch(
+        "https://dexback-mu.vercel.app/api/positions/save",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(positionData),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Backend responded with status: ${response.status}`);
+      }
+
+      console.log("Successfully saved position to backend");
+      return true;
+    } catch (error) {
+      console.error("Failed to save position to backend:", error);
+      return false;
+    }
+  };
+
+  /**
    * Refreshes all data after a successful transaction
    * with staggered timing to avoid overwhelming the network
    */
@@ -508,6 +751,47 @@ const LiquidityPage = () => {
           // Use comprehensive refresh function
           refreshAfterTransaction();
 
+          // Extract pool event and update backend
+          try {
+            // Get the transaction details to find the pool creation event
+            const txData = await advancedSuiClient.getTransactionBlock({
+              digest: result.digest,
+              options: {
+                showEvents: true,
+              },
+            });
+
+            // Find the pool creation event
+            const poolEvent = txData.events?.find((event) =>
+              event.type.includes("::PoolCreatedEvent")
+            );
+
+            if (poolEvent?.parsedJson) {
+              // We should update the backend with the new pool information
+              const poolData = {
+                pairId: poolEvent.parsedJson.poolId || "",
+                token0Type: token0.coinType || token0.name,
+                token1Type: token1.coinType || token1.name,
+                creator: account.address,
+                createdAt: new Date().toISOString(),
+                transactionHash: result.digest,
+              };
+
+              // Call backend API to save the pool
+              fetch("https://dexback-mu.vercel.app/api/pools/save", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(poolData),
+              }).catch((err) => {
+                console.error("Error updating backend with pool data:", err);
+              });
+            }
+          } catch (error) {
+            console.error("Error updating backend after pair creation:", error);
+          }
+
           toast.update(toastId, {
             render: "Pair Created Successfully!",
             type: "success",
@@ -578,7 +862,7 @@ const LiquidityPage = () => {
     }
   };
 
-  // Add liquidity handler with improved error handling
+  // Add liquidity handler with improved error handling and backend integration
   const handleAddLiquidity = async () => {
     if (!account?.address) {
       toast.error("Please connect your wallet");
@@ -642,25 +926,65 @@ const LiquidityPage = () => {
             await waitForTransactionFinality(result.digest);
 
             // Process LP events
-            await processLPEvent(result.digest);
+            const lpEvent = await processLPEvent(result.digest);
+
+            // Update backend with the new liquidity event
+            const backendUpdatePromise = saveEventToBackend(
+              lpEvent,
+              result.digest
+            );
+
+            // Update backend with the new position if we have LP coin ID
+            let positionUpdatePromise = Promise.resolve(false);
+            if (lpEvent && lpEvent.lpCoinId) {
+              positionUpdatePromise = savePositionToBackend(
+                lpEvent.lpCoinId,
+                result.digest
+              );
+            }
 
             // Use the comprehensive refresh function only after finality is confirmed
             refreshAfterTransaction();
 
+            // Wait for backend updates to complete
+            const [backendUpdated, positionUpdated] = await Promise.allSettled([
+              backendUpdatePromise,
+              positionUpdatePromise,
+            ]);
+
             // Clear inputs and show success message
             resetAmounts();
 
-            toast.update(toastId, {
-              render: "Liquidity Added Successfully! 🎉",
-              type: "success",
-              isLoading: false,
-              autoClose: 5000,
-            });
+            if (backendUpdated.status === "fulfilled" && backendUpdated.value) {
+              toast.update(toastId, {
+                render: "Liquidity Added Successfully! 🎉",
+                type: "success",
+                isLoading: false,
+                autoClose: 5000,
+              });
+            } else {
+              console.warn(
+                "Backend update failed but transaction was successful"
+              );
+              toast.update(toastId, {
+                render: "Liquidity added successfully (backend sync pending)",
+                type: "success",
+                isLoading: false,
+                autoClose: 5000,
+              });
+            }
           } catch (error) {
             console.error("Error processing LP events:", error);
 
             // Still try to refresh even if event processing fails
             refreshAfterTransaction();
+
+            // Try to update backend with basic information
+            try {
+              await saveEventToBackend(null, result.digest);
+            } catch (backendError) {
+              console.error("Error updating backend:", backendError);
+            }
 
             toast.update(toastId, {
               render: "Liquidity added successfully",
@@ -905,6 +1229,9 @@ const LiquidityPage = () => {
               <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
                 Event Type
               </th>
+              <th className="px-3 py-3 text-left text-xs font-medium text-indigo-300">
+                Time
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-indigo-500/20 bg-indigo-900/10">
@@ -983,6 +1310,11 @@ const LiquidityPage = () => {
                     {event.type ? event.type.split("::").pop() || "N/A" : "N/A"}
                   </span>
                 </td>
+                <td className="px-3 py-3 text-xs text-gray-300 whitespace-nowrap">
+                  {event.timestamp
+                    ? new Date(event.timestamp).toLocaleString()
+                    : "N/A"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1043,6 +1375,27 @@ const LiquidityPage = () => {
               >
                 Retry Now
               </button>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Show backend sync status if active */}
+        {isUpdatingBackend && (
+          <div className="w-[95%] max-w-xl mb-2">
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 rounded-xl bg-blue-900/20 border border-blue-500/30 flex items-start gap-3"
+            >
+              <RefreshCcw className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5 animate-spin" />
+              <div className="flex-1">
+                <p className="text-sm text-blue-300">
+                  Syncing data with backend...
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Your transaction is being processed and stored.
+                </p>
+              </div>
             </motion.div>
           </div>
         )}
@@ -1302,7 +1655,7 @@ const LiquidityPage = () => {
               </button>
             </div>
 
-            <EventsDisplay events={events} />
+            <EventsDisplay events={renderedEvents} />
           </motion.div>
         </motion.div>
       </div>

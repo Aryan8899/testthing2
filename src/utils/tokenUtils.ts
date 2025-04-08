@@ -378,3 +378,86 @@ export function findTokenById(tokenId: string): Token | null {
   // If found, ensure it has proper image
   return foundToken ? normalizeToken(foundToken) : null;
 }
+
+/**
+ * Dynamically finds an object ID for a given coin type
+ * @param {string} coinType - The coin type (e.g. "0x2::sui::SUI")
+ * @param {Object} suiClient - The SUI client instance
+ * @param {string} address - User's wallet address
+ * @returns {Promise<string|null>} - Object ID or null if not found
+ */
+export const getTokenObjectId = async (
+  coinType: any,
+  suiClient: any,
+  address: any
+) => {
+  if (!coinType || !address) return null;
+
+  try {
+    console.log(
+      `[getTokenObjectId] Fetching object ID for coin type: ${coinType}`
+    );
+
+    // Normalize the coin type format
+    const normalizedCoinType = normalizeCoinType(coinType);
+    console.log(
+      `[getTokenObjectId] Normalized coin type: ${normalizedCoinType}`
+    );
+
+    // Get all coins of the given type
+    const coinsResponse = await suiClient.getCoins({
+      owner: address,
+      coinType: normalizedCoinType,
+    });
+
+    if (coinsResponse.data && coinsResponse.data.length > 0) {
+      // Return the ID of the first coin found
+      const objectId = coinsResponse.data[0].coinObjectId;
+      console.log(
+        `[getTokenObjectId] Found object ID ${objectId} for type ${normalizedCoinType}`
+      );
+      return objectId;
+    }
+
+    console.warn(
+      `[getTokenObjectId] No coins found for type: ${normalizedCoinType}`
+    );
+    return null;
+  } catch (error) {
+    console.error(
+      `[getTokenObjectId] Error finding object ID for ${coinType}:`,
+      error
+    );
+    return null;
+  }
+};
+
+/**
+ * Ensures coin type is in the proper format
+ * @param {string} coinType - The coin type to normalize
+ * @returns {string} - The normalized coin type
+ */
+export const normalizeCoinType = (coinType: any) => {
+  if (!coinType) return "";
+
+  // If it's already properly formatted, return as is
+  if (coinType.startsWith("0x")) {
+    return coinType;
+  }
+
+  // Handle special case for SUI
+  if (coinType.toLowerCase().includes("sui::sui")) {
+    return "0x2::sui::SUI";
+  }
+
+  // Add '0x' prefix if it's a full type without it
+  if (coinType.includes("::")) {
+    const parts = coinType.split("::");
+    if (parts.length >= 3 && !parts[0].startsWith("0x")) {
+      parts[0] = `0x${parts[0]}`;
+      return parts.join("::");
+    }
+  }
+
+  return coinType;
+};

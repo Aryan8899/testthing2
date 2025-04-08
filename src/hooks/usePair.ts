@@ -1,7 +1,7 @@
 /**
  * Custom hook for managing pair information
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useWallet } from "@suiet/wallet-kit";
 import { SuiClient } from "@mysten/sui.js/client";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
@@ -10,6 +10,7 @@ import { PairReserves, PairInfo, LPEvent } from "../utils/pairUtils";
 import { CONSTANTS } from "../constants/addresses";
 import { suiClient } from "../utils/suiClient";
 import { debounce } from "lodash";
+
 // Initial reserves state
 const initialReserves: PairReserves = {
   reserve0: "0",
@@ -23,8 +24,21 @@ export function usePair(token0: Token | null, token1: Token | null) {
   const [reserves, setReserves] = useState<PairReserves>(initialReserves);
   const [events, setEvents] = useState<LPEvent[]>([]);
   const [isRefreshingPair, setIsRefreshingPair] = useState(false);
-  const [loadingPair, setLoadingPair] = useState<boolean>(true); // Track loading state// NEW: Track loading
+  const [loadingPair, setLoadingPair] = useState<boolean>(true); // Track loading state
   const { account, signAndExecuteTransactionBlock } = useWallet();
+
+  // Add a ref to cache events by pairId - this persists across renders
+  const eventsCache = useRef<Record<string, LPEvent[]>>({});
+
+  // Track if component is mounted
+  const isMounted = useRef(true);
+
+  // Set up cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
 
   // Reset pair state helper
   const resetPairState = useCallback(() => {
@@ -75,7 +89,7 @@ export function usePair(token0: Token | null, token1: Token | null) {
         });
 
         const response = await suiClient.devInspectTransactionBlock({
-          transactionBlock: tx,
+          transactionBlock: tx as any,
           sender: account.address,
         });
 
@@ -124,6 +138,28 @@ export function usePair(token0: Token | null, token1: Token | null) {
               setCurrentPairId(pairId);
               // Fetch events for this pair
               fetchPairEvents(pairId);
+
+              // Try to restore events from localStorage for immediate rendering
+              try {
+                const cachedEvents = localStorage.getItem(
+                  `lp_events_${pairId}`
+                );
+                if (cachedEvents) {
+                  const parsedEvents = JSON.parse(cachedEvents) as LPEvent[];
+
+                  // Only use cached events if we have some and component is still mounted
+                  if (parsedEvents.length > 0 && isMounted.current) {
+                    // Update cache ref and state
+                    eventsCache.current[pairId] = parsedEvents;
+                    setEvents(parsedEvents);
+                  }
+                }
+              } catch (error) {
+                console.warn(
+                  "Failed to restore events from localStorage:",
+                  error
+                );
+              }
             } else {
               resetPairState();
             }
@@ -138,14 +174,16 @@ export function usePair(token0: Token | null, token1: Token | null) {
         resetPairState();
         setPairExists(false);
       } finally {
-        setIsRefreshingPair(false);
-        setLoadingPair(false); // Stop loading
+        if (isMounted.current) {
+          setIsRefreshingPair(false);
+          setLoadingPair(false); // Stop loading
+        }
       }
     }, 300),
     [token0, token1, account?.address, suiClient, resetPairState]
   );
 
-  // Fetch events for a pair
+  // Fetch events for a pair with enhanced caching
   const fetchPairEvents = useCallback(
     async (pairId: string) => {
       if (!account?.address || !pairId) return;
@@ -153,18 +191,50 @@ export function usePair(token0: Token | null, token1: Token | null) {
       try {
         console.log("Fetching LP events for pair:", pairId);
 
-        // Get events for this pair
+        // Use cache if we have events for this pair while fetching
+        if (
+          eventsCache.current[pairId] &&
+          eventsCache.current[pairId].length > 0
+        ) {
+          if (isMounted.current) {
+            setEvents(eventsCache.current[pairId]);
+          }
+        }
+
+        // First try to get events by event type
         const recentTxs = await suiClient.queryEvents({
-          query: { MoveEventType: `${CONSTANTS.PACKAGE_ID}::pair::LPMint` },
+          query: {
+            MoveEventType: `${CONSTANTS.PACKAGE_ID}::pair::LPMint`,
+          },
           order: "descending",
-          limit: 20,
+          limit: 50,
         });
+
+        let eventsData = recentTxs.data;
+
+        // Filter events by pair ID in the application code
+        // Since we can't use MoveEventField directly in the query
+        const filteredEvents = eventsData.filter((event) => {
+          try {
+            const parsed = event.parsedJson as any;
+            return !parsed.pairId || parsed.pairId === pairId;
+          } catch {
+            return true; // Include events where we can't determine the pair ID
+          }
+        });
+
+        eventsData = filteredEvents.length > 0 ? filteredEvents : eventsData;
 
         const processedEvents: LPEvent[] = [];
 
-        for (const event of recentTxs.data) {
+        for (const event of eventsData) {
           try {
             const parsed = event.parsedJson as any;
+
+            // Skip events that don't match our pair
+            if (parsed.pairId && parsed.pairId !== pairId) {
+              continue;
+            }
 
             // Extract token type names correctly
             const extractTypeName = (tokenType: any) => {
@@ -197,9 +267,10 @@ export function usePair(token0: Token | null, token1: Token | null) {
               parsed.total_supply || parsed.totalSupply || "0";
             const timestamp = event.timestampMs
               ? Number(event.timestampMs)
-              : undefined;
+              : Date.now();
 
-            processedEvents.push({
+            // Create event object with only properties defined in LPEvent interface
+            const newEvent: LPEvent = {
               type: event.type,
               sender: parsed.sender || "",
               lpCoinId: lpCoinId,
@@ -210,7 +281,10 @@ export function usePair(token0: Token | null, token1: Token | null) {
               liquidity: parsed.liquidity || "0",
               totalSupply: totalSupply,
               timestamp: timestamp,
-            });
+              // transactionHash: event.id.txDigest, // Assuming transactionHash is in LPEvent
+            };
+
+            processedEvents.push(newEvent);
           } catch (err) {
             console.error("Error processing event:", err, event);
           }
@@ -219,16 +293,61 @@ export function usePair(token0: Token | null, token1: Token | null) {
         const validEvents = processedEvents.filter(
           (event) => event.amount0 !== "0" && event.liquidity !== "0"
         );
-        console.log("Processed LP events:", validEvents);
-        setEvents(validEvents);
+
+        console.log(`Processed ${validEvents.length} LP events`);
+
+        // Only update state if we have events and component is still mounted
+        if (validEvents.length > 0 && isMounted.current) {
+          // Store in cache
+          eventsCache.current[pairId] = validEvents;
+
+          // Update state
+          setEvents(validEvents);
+
+          // Store in localStorage for persistence
+          try {
+            localStorage.setItem(
+              `lp_events_${pairId}`,
+              JSON.stringify(validEvents)
+            );
+          } catch (error) {
+            console.warn("Failed to save events to localStorage:", error);
+          }
+        } else if (
+          validEvents.length === 0 &&
+          eventsCache.current[pairId] &&
+          isMounted.current
+        ) {
+          // If we didn't find any events, but have cache, keep using it
+          setEvents(eventsCache.current[pairId]);
+        }
       } catch (error) {
         console.error("Error fetching LP events:", error);
+
+        // Try to use cached events if available
+        if (pairId && eventsCache.current[pairId] && isMounted.current) {
+          setEvents(eventsCache.current[pairId]);
+        }
+
+        // Try to restore from localStorage as a last resort
+        try {
+          const cachedEvents = localStorage.getItem(`lp_events_${pairId}`);
+          if (cachedEvents && isMounted.current) {
+            const parsedEvents = JSON.parse(cachedEvents) as LPEvent[];
+            setEvents(parsedEvents);
+          }
+        } catch (storageError) {
+          console.warn(
+            "Failed to restore events from localStorage:",
+            storageError
+          );
+        }
       }
     },
     [account?.address, suiClient]
   );
 
-  // Process LP events after transaction
+  // Process LP events after transaction with improved event handling
   const processLPEvent = useCallback(
     async (txDigest: string) => {
       try {
@@ -266,21 +385,28 @@ export function usePair(token0: Token | null, token1: Token | null) {
               const token0TypeName =
                 typeof parsed.token0_type === "string"
                   ? parsed.token0_type
-                  : parsed.token0_type?.name || "Unknown Token";
+                  : parsed.token0_type?.name ||
+                    parsed.token0Type?.name ||
+                    token0?.coinType ||
+                    "Unknown Token";
 
               const token1TypeName =
                 typeof parsed.token1_type === "string"
                   ? parsed.token1_type
-                  : parsed.token1_type?.name || "Unknown Token";
+                  : parsed.token1_type?.name ||
+                    parsed.token1Type?.name ||
+                    token1?.coinType ||
+                    "Unknown Token";
 
-              // Ensure timestamp is a number or undefined
+              // Ensure timestamp is a number or use current time
               const timestamp = event.timestampMs
                 ? Number(event.timestampMs)
-                : undefined;
+                : Date.now();
 
+              // Create event object with only properties defined in LPEvent interface
               return {
                 type: event.type,
-                sender: parsed.sender || "",
+                sender: parsed.sender || account?.address || "",
                 lpCoinId,
                 token0Type: { name: token0TypeName },
                 token1Type: { name: token1TypeName },
@@ -288,10 +414,8 @@ export function usePair(token0: Token | null, token1: Token | null) {
                 amount1: parsed.amount1 || "0",
                 liquidity: parsed.liquidity || "0",
                 totalSupply: parsed.total_supply || parsed.totalSupply || "0",
-                pairId: currentPairId,
-                packageId: parsed.packageId || CONSTANTS.PACKAGE_ID,
                 timestamp,
-                transactionHash: txDigest, // Add transaction hash
+                transactionHash: txDigest, // Assuming transactionHash is in LPEvent
               };
             } catch (err) {
               console.error("Error processing LP event:", err, event);
@@ -300,8 +424,30 @@ export function usePair(token0: Token | null, token1: Token | null) {
           })
           .filter((event) => event !== null) as LPEvent[]; // Filter out null values
 
-        if (lpEvents.length > 0) {
-          setEvents((prev) => [...lpEvents, ...prev]);
+        if (lpEvents.length > 0 && isMounted.current) {
+          // Add the new events to the beginning of the existing events
+          const newEvents = [...lpEvents, ...(events || [])];
+
+          // Update state
+          setEvents(newEvents);
+
+          // Cache the updated events for the current pair
+          if (currentPairId) {
+            eventsCache.current[currentPairId] = newEvents;
+
+            // Also update localStorage
+            try {
+              localStorage.setItem(
+                `lp_events_${currentPairId}`,
+                JSON.stringify(newEvents)
+              );
+            } catch (error) {
+              console.warn(
+                "Failed to save updated events to localStorage:",
+                error
+              );
+            }
+          }
         } else {
           // If no LP events found in this transaction, refresh the events list
           if (currentPairId) {
@@ -326,6 +472,56 @@ export function usePair(token0: Token | null, token1: Token | null) {
             throw new Error("Failed to store LP events");
           }
           console.log("✅ Successfully stored LP events in database");
+
+          // After successful backend storage, try to store in the positions endpoint too
+          if (lpEvents.length > 0 && currentPairId) {
+            // Store position information if available
+            try {
+              // Map LP events to position data format
+              const positionData = lpEvents.map((event) => ({
+                id: event.lpCoinId,
+                owner: event.sender,
+                pairId: currentPairId,
+                token0: {
+                  name: getTokenName(token0?.name || ""),
+                  amount: event.amount0,
+                  decimals: token0?.decimals || 9,
+                },
+                token1: {
+                  name: getTokenName(token1?.name || ""),
+                  amount: event.amount1,
+                  decimals: token1?.decimals || 9,
+                },
+                liquidity: event.liquidity,
+                createdAt: new Date().toISOString(),
+                // transactionHash: event.transactionHash,
+              }));
+
+              // Only store if we have valid position data
+              if (positionData.length > 0) {
+                const positionResponse = await fetch(
+                  "https://dexback-mu.vercel.app/api/positions/save",
+                  {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(positionData[0]), // Send first position
+                  }
+                );
+
+                if (!positionResponse.ok) {
+                  console.warn("Failed to store position data in backend");
+                } else {
+                  console.log(
+                    "✅ Successfully stored position data in database"
+                  );
+                }
+              }
+            } catch (positionError) {
+              console.warn("Error storing position data:", positionError);
+            }
+          }
         } catch (error) {
           console.error("❌ Error storing LP events:", error);
         }
@@ -342,8 +538,24 @@ export function usePair(token0: Token | null, token1: Token | null) {
         return [];
       }
     },
-    [currentPairId, fetchPairEvents, suiClient]
+    [
+      currentPairId,
+      events,
+      fetchPairEvents,
+      suiClient,
+      token0,
+      token1,
+      account?.address,
+    ]
   );
+
+  // Helper function to get token name
+  const getTokenName = (fullName: string): string => {
+    if (!fullName) return "N/A";
+    return fullName.includes("::")
+      ? fullName.split("::").pop() || fullName
+      : fullName;
+  };
 
   // Add this function to your usePair hook:
   const refreshReserves = useCallback(async () => {
@@ -397,15 +609,17 @@ export function usePair(token0: Token | null, token1: Token | null) {
         // Check if tokens are in the correct order in the pair
         const isToken0Base = baseType0 < baseType1;
 
-        setReserves({
-          reserve0: isToken0Base
-            ? String(fields.reserve0)
-            : String(fields.reserve1),
-          reserve1: isToken0Base
-            ? String(fields.reserve1)
-            : String(fields.reserve0),
-          timestamp: Number(fields.block_timestamp_last) || 0,
-        });
+        if (isMounted.current) {
+          setReserves({
+            reserve0: isToken0Base
+              ? String(fields.reserve0)
+              : String(fields.reserve1),
+            reserve1: isToken0Base
+              ? String(fields.reserve1)
+              : String(fields.reserve0),
+            timestamp: Number(fields.block_timestamp_last) || 0,
+          });
+        }
 
         console.log("Reserves refreshed successfully:", {
           reserve0: isToken0Base
@@ -420,7 +634,9 @@ export function usePair(token0: Token | null, token1: Token | null) {
     } catch (error) {
       console.error("Error refreshing reserves:", error);
     } finally {
-      setIsRefreshingPair(false);
+      if (isMounted.current) {
+        setIsRefreshingPair(false);
+      }
     }
   }, [currentPairId, token0, token1, suiClient]);
 
@@ -432,6 +648,32 @@ export function usePair(token0: Token | null, token1: Token | null) {
       resetPairState();
     }
   }, [token0, token1, checkPairExistence, resetPairState]);
+
+  // Refresh events periodically to ensure they don't disappear
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+
+    // Only set up interval if we have a pair
+    if (currentPairId) {
+      // Do an initial refresh
+      fetchPairEvents(currentPairId);
+
+      // Set up polling with jitter to prevent network spikes
+      const jitter = Math.floor(Math.random() * 5000); // 0-5s random delay
+      intervalId = setInterval(() => {
+        if (isMounted.current && currentPairId) {
+          fetchPairEvents(currentPairId);
+        }
+      }, 30000 + jitter); // 30-35s interval with jitter
+    }
+
+    // Clean up interval on unmount or when pair changes
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [currentPairId, fetchPairEvents]);
 
   return {
     loadingPair,

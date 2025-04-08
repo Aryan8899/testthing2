@@ -11,6 +11,7 @@ import {
 } from "react-icons/fa";
 import { FaXTwitter, FaInstagram } from "react-icons/fa6";
 import { ArrowRight, Mail, Globe, Zap, Shield, BarChart3 } from "lucide-react";
+import { suidex } from "../assets"; // Import the SUIDEX logo
 
 interface SocialIconProps {
   Icon: React.ElementType;
@@ -87,15 +88,11 @@ export default function Footer() {
       {/* Main content */}
       <div className="container mx-auto px-6 relative z-10">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-10">
-          {/* Column 1: About */}
+          {/* Column 1: About - With logo image instead of text */}
           <div className="space-y-6">
             <div className="flex items-center">
-              <span className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-green-500">
-                SuiDe
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-cyan-400">
-                  X
-                </span>
-              </span>
+              {/* SUIDEX logo image instead of text */}
+              <img src={suidex} alt="SuiDeX Logo" className="h-8 w-auto" />
             </div>
 
             <p className="text-gray-400 pr-4">
