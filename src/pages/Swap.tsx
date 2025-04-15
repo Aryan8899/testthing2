@@ -144,6 +144,55 @@ const EnhancedSwapPage = () => {
     reserves
   );
 
+  // Debug effect to track button state
+  useEffect(() => {
+    console.log("Swap button state:", {
+      isSwapLoading,
+      loadingPair,
+      isLoadingRoutes,
+      hasToken0: !!token0,
+      hasToken1: !!token1,
+      hasAmount: !!(amount0 && parseFloat(amount0) > 0),
+      hasSelectedRoute: !!selectedRoute,
+      routesCount: routes.length,
+    });
+  }, [
+    isSwapLoading,
+    loadingPair,
+    isLoadingRoutes,
+    token0,
+    token1,
+    amount0,
+    selectedRoute,
+    routes.length,
+  ]);
+
+  // Force selected route when routes are found
+  useEffect(() => {
+    if (routes.length > 0 && !selectedRoute) {
+      console.log(
+        "Routes available but no selectedRoute - forcing selection:",
+        routes[0]
+      );
+      setSelectedRoute(routes[0]);
+    }
+  }, [routes, selectedRoute, setSelectedRoute]);
+
+  // Enhanced route finding trigger
+  useEffect(() => {
+    if (
+      token0 &&
+      token1 &&
+      amount0 &&
+      parseFloat(amount0) > 0 &&
+      !isLoadingRoutes &&
+      pairExists
+    ) {
+      console.log("All conditions met, triggering route finding");
+      debouncedFindRoutes();
+    }
+  }, [token0, token1, amount0, pairExists, reserves, isLoadingRoutes]);
+
   // Handle redirect to Add Liquidity page
   const handleAddLiquidityRedirect = useCallback(() => {
     // Create query parameters if needed
@@ -215,7 +264,7 @@ const EnhancedSwapPage = () => {
     }
   }, []);
 
-  // Debounced route finding to prevent excessive API calls
+  // Improved debounced route finding to prevent excessive API calls
   const debouncedFindRoutes = useCallback(() => {
     // Always clear any existing timeout first
     if (findRoutesTimeoutRef.current) {
@@ -227,22 +276,45 @@ const EnhancedSwapPage = () => {
       return;
     }
 
-    const now = Date.now();
-    const timeSinceLastRequest = now - lastFindRoutesRequestRef.current;
+    console.log("Finding routes for tokens:", {
+      token0Symbol: token0?.symbol,
+      token1Symbol: token1?.symbol,
+      amount: amount0,
+      pairExists,
+    });
 
-    // If enough time has passed, find routes immediately
-    if (timeSinceLastRequest > 500) {
-      lastFindRoutesRequestRef.current = now;
+    // Call findRoutes immediately instead of debouncing in some cases
+    if (pairExists && currentPairId && reserves) {
+      console.log("Direct pair exists, finding routes immediately");
+      lastFindRoutesRequestRef.current = Date.now();
       findRoutes();
     } else {
-      // Otherwise schedule for later
-      findRoutesTimeoutRef.current = setTimeout(() => {
-        lastFindRoutesRequestRef.current = Date.now();
+      // Standard debounced behavior
+      const now = Date.now();
+      const timeSinceLastRequest = now - lastFindRoutesRequestRef.current;
+
+      // If enough time has passed, find routes immediately
+      if (timeSinceLastRequest > 500) {
+        lastFindRoutesRequestRef.current = now;
         findRoutes();
-        findRoutesTimeoutRef.current = null;
-      }, 500 - timeSinceLastRequest);
+      } else {
+        // Otherwise schedule for later
+        findRoutesTimeoutRef.current = setTimeout(() => {
+          lastFindRoutesRequestRef.current = Date.now();
+          findRoutes();
+          findRoutesTimeoutRef.current = null;
+        }, 500 - timeSinceLastRequest);
+      }
     }
-  }, [findRoutes, token0, token1, amount0]);
+  }, [
+    findRoutes,
+    token0,
+    token1,
+    amount0,
+    pairExists,
+    currentPairId,
+    reserves,
+  ]);
 
   // Function to wait for transaction finality
   const waitForTransactionFinality = async (
@@ -1044,8 +1116,8 @@ const EnhancedSwapPage = () => {
                 onClick={handleSwap}
                 disabled={
                   isSwapLoading ||
-                  !!loadingPair ||
-                  isLoadingRoutes ||
+                  (!!loadingPair && !selectedRoute) || // Only consider loadingPair if we don't have a route
+                  (isLoadingRoutes && !selectedRoute) || // Only consider loadingRoutes if we don't have a route
                   !token0 ||
                   !token1 ||
                   !amount0 ||
@@ -1085,14 +1157,34 @@ const EnhancedSwapPage = () => {
                       ? "Select Tokens"
                       : !amount0 || parseFloat(amount0) <= 0
                       ? "Enter Amount"
-                      : !selectedRoute
+                      : isLoadingRoutes && !selectedRoute
                       ? "Finding Routes..."
+                      : loadingPair && !selectedRoute
+                      ? "Loading Pair..."
+                      : !selectedRoute
+                      ? "No Route Available"
                       : selectedRoute.type === "multi"
                       ? `Swap via ${selectedRoute.hops} Pools`
                       : "Swap Tokens"}
                   </div>
                 )}
               </button>
+
+              {/* Debug info - you can remove this in production if desired */}
+              {/* {token0 &&
+                token1 &&
+                amount0 &&
+                parseFloat(amount0) > 0 &&
+                !selectedRoute && (
+                  <div className="mt-2 text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/20">
+                    <div className="font-bold">Debug info:</div>
+                    <div>Pair exists: {pairExists ? "Yes" : "No"}</div>
+                    <div>Loading pair: {loadingPair ? "Yes" : "No"}</div>
+                    <div>Loading routes: {isLoadingRoutes ? "Yes" : "No"}</div>
+                    <div>Routes found: {routes.length}</div>
+                    <div>Current pair ID: {currentPairId || "None"}</div>
+                  </div>
+                )} */}
             </motion.div>
           </div>
         </motion.div>
